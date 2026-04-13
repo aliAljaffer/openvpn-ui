@@ -1,0 +1,116 @@
+{{ template "layout/base.html" . }}
+
+{{define "head"}}
+<title>OpenVPN UI — Map View</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<style>
+  #vpn-map { height: 520px; width: 100%; border-radius: 0 0 4px 4px; }
+</style>
+{{end}}
+
+{{define "body"}}
+<div class="row">
+  <div class="col-md-12">
+    <div class="card card-default shadow">
+      <div class="card-header with-border d-flex justify-content-between align-items-center">
+        <h3 class="card-title mb-0">Connected Clients — World Map</h3>
+        <small class="text-muted">Auto-refreshes every 60 s</small>
+      </div>
+      <div class="card-body p-0">
+        {{if .GeoIPError}}
+        <div class="alert alert-warning m-3">
+          <i class="fa fa-exclamation-triangle"></i> {{.GeoIPError}}
+        </div>
+        {{end}}
+        <div id="vpn-map"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Unlocated clients table — shown by JS when there are entries -->
+<div class="row mt-3" id="unlocated-section" style="display:none">
+  <div class="col-md-12">
+    <div class="card card-default shadow">
+      <div class="card-header with-border">
+        <h3 class="card-title">Unlocated Clients</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table no-margin">
+          <thead>
+            <tr>
+              <th>Common Name</th>
+              <th>Real Address</th>
+              <th>Virtual Address</th>
+              <th>Received</th>
+              <th>Sent</th>
+              <th>Connected Since</th>
+            </tr>
+          </thead>
+          <tbody id="unlocated-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqM4=" crossorigin=""></script>
+<script>
+(function () {
+  var map = L.map('vpn-map', { scrollWheelZoom: false }).setView([20, 10], 2);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 18
+  }).addTo(map);
+
+  var clients = {{.MapClientsJSON}};
+
+  function fmtBytes(b) {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1024).toFixed(1) + ' KB';
+  }
+
+  var unlocatedBody    = document.getElementById('unlocated-body');
+  var unlocatedSection = document.getElementById('unlocated-section');
+  var hasUnlocated     = false;
+
+  (clients || []).forEach(function (c) {
+    if (c.Located) {
+      var popup =
+        '<b>' + c.CommonName + '</b><br>' +
+        '<span class="text-muted">' + c.RealAddress + '</span><br>' +
+        (c.City ? c.City + ', ' : '') + c.Country + '<br>' +
+        '<small>&#8595; ' + fmtBytes(c.BytesReceived) +
+        ' &nbsp; &#8593; ' + fmtBytes(c.BytesSent) + '</small><br>' +
+        '<small>Since: ' + c.ConnectedSince + '</small>';
+      L.marker([c.Latitude, c.Longitude])
+        .addTo(map)
+        .bindPopup(popup);
+    } else if (unlocatedBody) {
+      hasUnlocated = true;
+      var row =
+        '<tr>' +
+        '<td>' + c.CommonName + '</td>' +
+        '<td>' + c.RealAddress + '</td>' +
+        '<td>' + c.VirtualAddress + '</td>' +
+        '<td>' + fmtBytes(c.BytesReceived) + '</td>' +
+        '<td>' + fmtBytes(c.BytesSent) + '</td>' +
+        '<td>' + c.ConnectedSince + '</td>' +
+        '</tr>';
+      unlocatedBody.innerHTML += row;
+    }
+  });
+
+  if (hasUnlocated && unlocatedSection) {
+    unlocatedSection.style.display = '';
+  }
+
+  // Auto-refresh every 60 seconds
+  setTimeout(function () { location.reload(); }, 60000);
+})();
+</script>
+{{end}}

@@ -142,6 +142,12 @@ github.com/mitchellh/mapstructure
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
+# github.com/oschwald/geoip2-golang v1.11.0
+## explicit; go 1.21
+github.com/oschwald/geoip2-golang
+# github.com/oschwald/maxminddb-golang v1.13.0
+## explicit; go 1.21
+github.com/oschwald/maxminddb-golang
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors

@@ -8,3 +8,22 @@ easy-rsa/pki/index.txt
 build/qrencode
 openvpn-ui.tar.gz
 qrencode
+
+# Compiled binary
+openvpn-ui
+
+# SQLite database directory
+db/
+
+# GeoIP databases (large binary, separate license/download required)
+*.mmdb
+
+# Log files
+*.log
+
+# easy-rsa PKI sensitive files
+easy-rsa/pki/private/
+easy-rsa/pki/issued/
+easy-rsa/pki/reqs/
+easy-rsa/pki/serial
+easy-rsa/pki/openssl-easyrsa.cnf

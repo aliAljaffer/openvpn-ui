@@ -8,6 +8,7 @@ require (
 	github.com/d3vilh/openvpn-server-config v0.3.5
 	github.com/go-ldap/ldap/v3 v3.4.9
 	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/oschwald/geoip2-golang v1.11.0
 	golang.org/x/oauth2 v0.24.0
 	google.golang.org/api v0.214.0
 	gopkg.in/hlandau/passlib.v1 v1.0.11
@@ -35,6 +36,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
