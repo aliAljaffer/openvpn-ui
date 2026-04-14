@@ -2,11 +2,10 @@ package controllers
 
 import (
 	"bufio"
-	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/beego/beego/v2/core/logs"
-	"github.com/d3vilh/openvpn-ui/models"
 )
 
 type LogsController struct {
@@ -26,41 +25,22 @@ func (c *LogsController) Get() {
 		Title: "Logs",
 	}
 
-	settings := models.Settings{Profile: "default"}
-	settings.Read("Profile")
-
-	if err := settings.Read("OVConfigPath"); err != nil {
-		logs.Error(err)
+	// Run /opt/scripts/logs.sh which is mounted from the host and calls
+	// journalctl -n 300 -xeu openvpn-server@server.service --no-pager
+	out, err := exec.Command("/opt/scripts/logs.sh").Output()
+	if err != nil {
+		logs.Error("logs.sh failed:", err)
+		c.Data["logs"] = []string{"Could not read logs: " + err.Error()}
 		return
 	}
 
-	fName := settings.OVConfigPath + "/log/openvpn.log"
-	file, err := os.Open(fName)
-	if err != nil {
-		logs.Error(err)
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	var logs []string
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		line := scanner.Text()
-		//	if strings.Index(line, " MANAGEMENT: ") == -1 {
 		if !strings.Contains(line, " MANAGEMENT: ") {
-			logs = append(logs, strings.Trim(line, "\t"))
+			lines = append(lines, strings.TrimSpace(line))
 		}
 	}
-	start := len(logs) - 300 // :P
-	if start < 0 {
-		start = 0
-	}
-	c.Data["logs"] = logs[start:]
-	//c.Data["logs"] = reverse(logs[start:])
+	c.Data["logs"] = lines
 }
-
-//func reverse(lines []string) []string {
-//	for i := 0; i < len(lines)/2; i++ {
-//		j := len(lines) - i - 1
-//		lines[i], lines[j] = lines[j], lines[i]
-//	}
-//	return lines
-//}

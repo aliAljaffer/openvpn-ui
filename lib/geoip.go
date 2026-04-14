@@ -2,6 +2,7 @@ package lib
 
 import (
 	"net"
+	"strings"
 
 	mi "github.com/d3vilh/openvpn-server-config/server/mi"
 	geoip2 "github.com/oschwald/geoip2-golang"
@@ -35,12 +36,14 @@ func EnrichWithGeo(clients []*mi.OVClient, dbPath string) ([]GeoClient, error) {
 	for _, c := range clients {
 		gc := GeoClient{OVClient: *c}
 
-		// RealAddress is "ip:port"
-		host, _, err := net.SplitHostPort(c.RealAddress)
-		if err != nil {
+		// RealAddress may be "ip:port" or "proto:ip:port" (e.g. "tcp4-server:1.2.3.4:5678").
+		// The IP is always the second-to-last colon-separated segment.
+		parts := strings.Split(c.RealAddress, ":")
+		if len(parts) < 2 {
 			result = append(result, gc)
 			continue
 		}
+		host := parts[len(parts)-2]
 
 		ip := net.ParseIP(host)
 		if ip == nil || ip.IsLoopback() || ip.IsPrivate() {

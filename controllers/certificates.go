@@ -55,7 +55,7 @@ func (c *CertificatesController) Download() {
 	c.Ctx.Output.Header("Content-Type", "application/octet-stream")
 	c.Ctx.Output.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 
-	keysPath := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/issued")
+	keysPath := filepath.Join(state.GlobalCfg.EasyRSAPath, "pki/issued")
 
 	cfgPath, err := c.saveClientConfig(keysPath, name)
 	if err != nil {
@@ -83,6 +83,11 @@ func (c *CertificatesController) Get() {
 	cfg1 := models.OVClientConfig{Profile: "default"}
 	_ = cfg1.Read("Profile")
 	c.Data["SettingsC"] = &cfg1
+
+	disabled, _ := web.AppConfig.String("ClientAddDisabled")
+	formURL, _ := web.AppConfig.String("ClientAddFormURL")
+	c.Data["ClientAddDisabled"] = disabled == "1" || disabled == "true"
+	c.Data["ClientAddFormURL"] = formURL
 }
 
 func (c *CertificatesController) DisplayImage() {
@@ -110,7 +115,7 @@ func (c *CertificatesController) DisplayImage() {
 }
 
 func (c *CertificatesController) showCerts() {
-	path := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/index.txt")
+	path := filepath.Join(state.GlobalCfg.EasyRSAPath, "pki/index.txt")
 	certs, err := lib.ReadCerts(path)
 	if err != nil {
 		logs.Error(err)
@@ -235,7 +240,7 @@ func validateCertParams(cert NewCertParams) map[string]map[string]string {
 
 func (c *CertificatesController) saveClientConfig(keysPath string, name string) (string, error) {
 	cfg := clientconfig.New()
-	keysPathCa := filepath.Join(state.GlobalCfg.OVConfigPath, "pki")
+	ovDir := state.GlobalCfg.OVConfigPath
 
 	ovClientConfig := &models.OVClientConfig{Profile: "default"}
 	if err := ovClientConfig.Read("Profile"); err != nil {
@@ -262,25 +267,33 @@ func (c *CertificatesController) saveClientConfig(keysPath string, name string) 
 	cfg.CustomConfTwo = ovClientConfig.CustomConfTwo
 	cfg.CustomConfThree = ovClientConfig.CustomConfThree
 
-	ca, err := os.ReadFile(filepath.Join(keysPathCa, "ca.crt"))
+	// ca.crt lives directly under OVConfigPath (angristan layout)
+	ca, err := os.ReadFile(filepath.Join(ovDir, "ca.crt"))
 	if err != nil {
 		return "", err
 	}
 	cfg.Ca = string(ca)
 
-	ta, err := os.ReadFile(filepath.Join(keysPathCa, "ta.key"))
+	// Try tls-crypt-v2.key first (angristan), fall back to ta.key
+	taPath := filepath.Join(ovDir, "tls-crypt-v2.key")
+	if _, statErr := os.Stat(taPath); os.IsNotExist(statErr) {
+		taPath = filepath.Join(ovDir, "ta.key")
+	}
+	ta, err := os.ReadFile(taPath)
 	if err != nil {
 		return "", err
 	}
 	cfg.Ta = string(ta)
 
+	// Client cert is under EasyRSAPath/pki/issued/
 	cert, err := os.ReadFile(filepath.Join(keysPath, name+".crt"))
 	if err != nil {
 		return "", err
 	}
 	cfg.Cert = string(cert)
 
-	keysPathKey := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/private")
+	// Client private key is under EasyRSAPath/pki/private/
+	keysPathKey := filepath.Join(state.GlobalCfg.EasyRSAPath, "pki/private")
 	key, err := os.ReadFile(filepath.Join(keysPathKey, name+".key"))
 	if err != nil {
 		return "", err
@@ -294,7 +307,14 @@ func (c *CertificatesController) saveClientConfig(keysPath string, name string) 
 	// cfg.Auth = serverConfig.Auth     //Now getting it from client config
 	// cfg.Cipher = serverConfig.Cipher //Now getting it from client config
 
-	destPath := filepath.Join(state.GlobalCfg.OVConfigPath, "clients", name+".ovpn")
+	clientsDir, _ := web.AppConfig.String("OVClientsDir")
+	if clientsDir == "" {
+		clientsDir = filepath.Join(state.GlobalCfg.OVConfigPath, "clients")
+	}
+	if err := os.MkdirAll(clientsDir, 0755); err != nil {
+		logs.Error("could not create OVClientsDir:", err)
+	}
+	destPath := filepath.Join(clientsDir, name+".ovpn")
 	if err := SaveToFile(filepath.Join(c.ConfigDir, "openvpn-client-config.tpl"), cfg, destPath); err != nil {
 		logs.Error(err)
 		return "", err
