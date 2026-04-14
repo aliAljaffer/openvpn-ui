@@ -42,7 +42,7 @@
               <tr>
                   <td>
                     <a href="{{urlfor "CertificatesController.Download" ":key" .Details.CN}}">
-                      {{ .Details.Name }}
+                      {{ prettyName .Details.Name }}
                     </a>
                   </td>
                   {{if and (eq .Revocation "") (not .IsExpiring)}}
@@ -103,21 +103,21 @@
                     </td>
                   {{end}}
                     <td class="align-middle">
-                  {{ if and (eq .Revocation "") (ne .Details.Name "") }}
-                      <a href="{{urlfor "CertificatesController.Renew" ":key" .Details.Name ":localip" .Details.LocalIP ":serial" .Serial ":tfaname" .Details.TFAName}}" class="btn btn-primary btn-xs" title="Renew" style="font-size: 80%;">Renew</a>
+                  {{ if and (eq .Revocation "") (ne .Details.CN "") }}
+                      <a href="{{urlfor "CertificatesController.Renew" ":key" .Details.CN "localip" .Details.LocalIP "serial" .Serial "tfaname" .Details.TFAName}}" class="btn btn-primary btn-xs" title="Renew" style="font-size: 80%;">Renew</a>
                   {{else}}
                       <a class="btn btn-default btn-xs" disabled>Renew</a>
                   {{end}}
 
-                  {{ if and (eq .Revocation "") (ne .Details.Name "") }}
-                      <a href="{{urlfor "CertificatesController.Revoke" ":key" .Details.Name ":serial" .Serial ":tfaname" .Details.TFAName}}" class="btn btn-warning btn-xs" title="Revoke" style="font-size: 80%;">Revoke</a>
+                  {{ if and (eq .Revocation "") (ne .Details.CN "") }}
+                      <a href="{{urlfor "CertificatesController.Revoke" ":key" .Details.CN "serial" .Serial "tfaname" .Details.TFAName}}" class="btn btn-warning btn-xs" title="Revoke" style="font-size: 80%;">Revoke</a>
                   {{else}}
                       <a class="btn btn-default btn-xs" disabled>Revoke</a>
                   {{end}}
                   {{ if eq .Revocation ""}}
                       <a class="btn btn-default btn-xs" disabled>Delete</a>
                   {{else}}
-                      <a href="{{urlfor "CertificatesController.Burn" ":key" .Details.CN ":serial" .Serial ":tfaname" .Details.TFAName}}" class="btn btn-danger btn-xs" title="Burn" style="font-size: 80%;">Delete</a>
+                      <a href="{{urlfor "CertificatesController.Burn" ":key" .Details.CN "serial" .Serial "tfaname" .Details.TFAName}}" class="btn btn-danger btn-xs" title="Burn" style="font-size: 80%;">Delete</a>
                   {{end}}
                     </td>
               </tr>
@@ -339,25 +339,6 @@
       </div>
     </div>
   </div>
-</div>
-
-<div class="card card-default">
-  <div class="card-header with-border">
-    <h3 class="card-title">OpenVPN Server Control</h3>
-    <div class="pull-left card-tools">
-      <button type="button" class="btn btn-tool" data-card-widget="collapse">
-      <i class="fa fa-minus"></i></button>
-    </div>
-  </div>
-  <!-- /.box-header -->
-  <div class="card-body">
-    <span id="helpBlock" class="text-muted">If you are revoking Certificate, don't forget to restart OpenVPN Server to disconnect all active client sessions and make revocation to take the effect.<br/></span><br>
-    <a href="javascript:$.MyAPP.Restart('SIGUSR1')"  class="btn btn-warning btn-primary" style="width: 145px;" title="Conditional Restart (SIGUSR1)">Restart Server</a>
-    &nbsp; OpenVPN Server Conditional Restart to reinitiate all active client sessions. <br><br>
-    <a href="{{urlfor "CertificatesController.Restart"}}" class="btn btn-danger btn-primary" style="width: 145px;" title="Restart OpenVPN container">Restart Container</a> 
-    &nbsp; OpenVPN Container Restart to re-apply Firewall rules and restart OpenVPN Server. Will take more time than regular Restart. 
-  </div>
-  <!-- /.box-footer -->
 </div>
 {{end}}
 

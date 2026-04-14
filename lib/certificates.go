@@ -108,9 +108,9 @@ func parseDetails(d string) *Details {
 			}
 		}
 	}
-	// Derive Name from CN when not explicitly set.
+	// Always derive Name as last two dash-separated parts of CN.
 	// Convention: project-org-firstname-lastname → last two parts = firstname-lastname
-	if details.Name == "" && details.CN != "" {
+	if details.CN != "" {
 		parts := strings.Split(details.CN, "-")
 		if len(parts) >= 2 {
 			details.Name = strings.Join(parts[len(parts)-2:], "-")
@@ -310,7 +310,7 @@ func RenewCertificate(name string, localip string, serial string, tfaname string
 			"cd /opt/scripts/ && "+
 				"export KEY_NAME=%s &&"+
 				"export TFA_NAME=%s &&"+
-				"./renew.sh %s %s %s", name, tfaname, name, localip, serial))
+				"./renew.sh \"%s\" \"%s\" \"%s\"", name, tfaname, name, localip, serial))
 	cmd.Dir = state.GlobalCfg.OVConfigPath
 	output, err := cmd.CombinedOutput()
 	if err != nil {

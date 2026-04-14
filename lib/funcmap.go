@@ -4,13 +4,29 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/beego/beego/v2/core/logs"
 	"github.com/beego/beego/v2/server/web"
 )
 
+func prettyName(s string) string {
+	parts := strings.Split(s, "-")
+	for i, p := range parts {
+		if len(p) == 0 {
+			continue
+		}
+		r := []rune(p)
+		r[0] = unicode.ToUpper(r[0])
+		parts[i] = string(r)
+	}
+	return strings.Join(parts, " ")
+}
+
 // AddFuncMaps .
 func AddFuncMaps() {
+	_ = web.AddFuncMap("prettyName", prettyName)
 	_ = web.AddFuncMap("field_error_message", func(v map[string]map[string]string, key string) map[string]string {
 		if val, ok := v[key]; ok {
 			return val

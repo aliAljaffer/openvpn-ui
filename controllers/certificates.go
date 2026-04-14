@@ -167,12 +167,12 @@ func (c *CertificatesController) Revoke() {
 	c.TplName = "certificates.html"
 	flash := web.NewFlash()
 	name := c.GetString(":key")
-	serial := c.GetString(":serial")
-	tfaname := c.GetString(":tfaname")
+	serial := c.GetString("serial")
+	tfaname := c.GetString("tfaname")
 	if err := lib.RevokeCertificate(name, serial, tfaname); err != nil {
 		logs.Error(err)
-		//flash.Error(err.Error())
-		//flash.Store(&c.Controller)
+		flash.Error(err.Error())
+		flash.Store(&c.Controller)
 	} else {
 		flash.Success("Success! Certificate for the name \"" + name + "\" and serial  \"" + serial + "\" has been revoked")
 		flash.Store(&c.Controller)
@@ -187,18 +187,18 @@ func (c *CertificatesController) Restart() {
 	// return
 }
 
-// @router /certificates/burn/:key/:serial/:tfaname [get]
+// @router /certificates/burn/:key [get]
 func (c *CertificatesController) Burn() {
 	c.TplName = "certificates.html"
 	flash := web.NewFlash()
 	CN := c.GetString(":key")
-	serial := c.GetString(":serial")
-	tfaname := c.GetString(":tfaname")
+	serial := c.GetString("serial")
+	tfaname := c.GetString("tfaname")
 	logs.Info("Controller: Burning certificate with parameters: CN=%s, serial=%s, tfaname=%s", CN, serial, tfaname)
 	if err := lib.BurnCertificate(CN, serial, tfaname); err != nil {
 		logs.Error(err)
-		//flash.Error(err.Error())
-		//flash.Store(&c.Controller)
+		flash.Error(err.Error())
+		flash.Store(&c.Controller)
 	} else {
 		flash.Success("Success! Certificate for the name \"" + CN + "\" and serial  \"" + serial + "\"  has been removed")
 		flash.Store(&c.Controller)
@@ -206,14 +206,14 @@ func (c *CertificatesController) Burn() {
 	c.showCerts()
 }
 
-// @router /certificates/revoke/:key [get]
+// @router /certificates/renew/:key [get]
 func (c *CertificatesController) Renew() {
 	c.TplName = "certificates.html"
 	flash := web.NewFlash()
 	name := c.GetString(":key")
-	localip := c.GetString(":localip")
-	serial := c.GetString(":serial")
-	tfaname := c.GetString(":tfaname")
+	localip := c.GetString("localip")
+	serial := c.GetString("serial")
+	tfaname := c.GetString("tfaname")
 	if err := lib.RenewCertificate(name, localip, serial, tfaname); err != nil {
 		logs.Error(err)
 		//flash.Error(err.Error())
