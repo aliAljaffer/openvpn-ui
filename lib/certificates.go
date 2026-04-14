@@ -108,6 +108,16 @@ func parseDetails(d string) *Details {
 			}
 		}
 	}
+	// Derive Name from CN when not explicitly set.
+	// Convention: project-org-firstname-lastname → last two parts = firstname-lastname
+	if details.Name == "" && details.CN != "" {
+		parts := strings.Split(details.CN, "-")
+		if len(parts) >= 2 {
+			details.Name = strings.Join(parts[len(parts)-2:], "-")
+		} else {
+			details.Name = details.CN
+		}
+	}
 	return details
 }
 

@@ -41,7 +41,7 @@
               {{ if ne .Details.Name "server"}}
               <tr>
                   <td>
-                    <a href="{{urlfor "CertificatesController.Download" ":key" .Details.Name}}">
+                    <a href="{{urlfor "CertificatesController.Download" ":key" .Details.CN}}">
                       {{ .Details.Name }}
                     </a>
                   </td>
@@ -181,7 +181,7 @@
                       <div class="modal-footer justify-content-between">
                         <button type="button" class="btn btn-default pull-left" data-dismiss="modal">Close</button>
                         <button type="submit" class="btn btn-primary copy-btn copy-modal-data-btn" style="width: 135px;">Copy</button>
-                        <button type="button" class="btn btn-success send-email-with-qr-btn" style="width: 135px;">Send Email</button>
+                        <a href="{{urlfor "CertificatesController.Download" ":key" .Details.CN}}" class="btn btn-info" style="width: 135px;">Download .ovpn</a>
                       </div>
                       </div>
                     </div>
@@ -218,10 +218,19 @@
         <!-- /.box-header -->
         {{template "common/alert.html" .}}
       <div class="card-body">
+        {{if .ClientAddDisabled}}
+        <div class="alert alert-info">
+          <i class="fa fa-info-circle"></i>
+          Client certificate creation is managed through the official request form.
+          Please submit your request at:
+          <a href="{{.ClientAddFormURL}}" target="_blank">{{.ClientAddFormURL}}</a>
+        </div>
+        {{else}}
         <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#modal-default">
           Create Certificate
         </button>
         <span class="text-muted"> {{template "common/fvalid.html" field_error_message .validation "Name" }}</span>
+        {{end}}
       </div>
     </div>
   </div>
@@ -352,50 +361,4 @@
 </div>
 {{end}}
 
-<script>
-// Attach a click event handler to the "Send Email" button
-$('.send-email-with-qr-btn').on('click', function () {
-  var $modal = $(this).closest('.modal');
-
-  // Extract the email address from the modal content (as before)
-  var emailAddress = $modal.find('.copy-details a[href^="mailto:"]').attr('href');
-  emailAddress = emailAddress.replace('mailto:', '');
-
-  // Extract all modal content (as before)
-  var content = '';
-  $modal.find('.copy-details').each(function () {
-    content += $(this).text().replace(/:\s/g, ': ') + '\n';
-  });
-  content = content.replace(/:\s\n/g, ': ');
-
-  // Extract additional details for the email body
-  var certName = $modal.find('.cert-name').text().trim();
-  var expirationDate = $modal.find('.exp-time').text();
-  var tfaName = $modal.find('.2fa-name').text();
-  var organisation = $modal.find('.reg-org').text().trim();
-
-  // Prepare the email subject
-  var emailSubject = 'Certificate Information for ' + certName;
-
-  // Prepare the email body using the template
-  var emailBody = `Dear ${certName},\n\n`
-    + `Below is your new VPN certificate details.\n\n`
-    + `Name: ${certName}\n`
-    + `Two Factor Authentication (2FA) name(if applicable): ${tfaName}\n`
-    + `The Certificate is registered on e-mail ${emailAddress} and will be valid until ${expirationDate}.\n\n`
-    + `Please take care.\n\n`
-    + `Sincerely yours, ${organisation} engineering team.`;
-
-  // Encode the email body as a URI component
-  var encodedEmailBody = encodeURIComponent(emailBody);
-
-  // Prepare the mailto link with the encoded email address, subject, and body
-  var mailtoLink = 'mailto:' + encodeURIComponent(emailAddress) +
-    '?subject=' + encodeURIComponent(emailSubject) +
-    '&body=' + encodedEmailBody;
-
-  // Open the default email client with the mailto link
-  window.location.href = mailtoLink;
-});
-  </script>
   
