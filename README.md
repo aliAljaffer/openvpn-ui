@@ -45,7 +45,7 @@ extends it with production-oriented features specific to our deployment.
 | Docker + Docker Compose | Runs openvpn-ui as a container on the same host |
 | Alibaba Cloud OSS bucket | Required for log archiving and the audit log browser |
 | Alibaba Cloud RAM user | Needs `oss:*` permission on the bucket (credentials stored in `/root/.ossutilconfig`) |
-| ossutil | Installed on the host by the bootstrap script; used by cron jobs for uploads |
+| ossutil | Installed on the host; used by cron jobs to upload log archives to OSS |
 | MaxMind GeoLite2-City | Required for the map view and location column in audit logs. Free license available at maxmind.com |
 
 ---
@@ -54,7 +54,7 @@ extends it with production-oriented features specific to our deployment.
 
 ### conf/app.conf
 
-The install script writes this file on the VM. The keys relevant to this fork:
+The keys relevant to this fork (set these on the VM, not in the repo copy):
 
 ```ini
 OSSLogBucket = openvpn-log-sink-your-bucket-name
@@ -85,7 +85,7 @@ The file must be owned by root and chmod 600 on the host.
 
 ### docker-compose.yml volumes
 
-The container expects these mounts (written by the install script):
+The container expects these mounts:
 
 ```yaml
 volumes:
@@ -101,7 +101,7 @@ volumes:
 
 ### Log archiving cron jobs
 
-Installed at `/etc/cron.d/openvpn-logs` on the host:
+These run on the host at `/etc/cron.d/openvpn-logs`:
 
 ```
 * * * * * root /opt/scripts/ovpn-log-collect.sh        # append new journal lines
@@ -117,19 +117,20 @@ by the container for the live "recently disconnected" map feature.
 ## Deployment
 
 The Docker image is built locally (not on the VM) to avoid taxing the small
-VM instance, then transferred and loaded:
+VM instance, then transferred and loaded. From the operator's machine:
 
 ```bash
-# After code changes:
-./bootstrap-openvpn.sh rebuild --src-dir /path/to/openvpn-ui
-
-# Full provision (new VM):
-./bootstrap-openvpn.sh provision --tenant-name acme --ui-password secret
+docker build --platform linux/amd64 -t openvpn-ui-local:latest .
+docker save openvpn-ui-local:latest | gzip > /tmp/openvpn-ui-local.tar.gz
+scp /tmp/openvpn-ui-local.tar.gz root@YOUR_VM_IP:/tmp/
+ssh root@YOUR_VM_IP "
+  docker load < /tmp/openvpn-ui-local.tar.gz &&
+  docker compose -f /opt/openvpn-ui/docker-compose.yml up -d --force-recreate &&
+  rm /tmp/openvpn-ui-local.tar.gz
+"
 ```
 
-The `rebuild` command builds a `linux/amd64` image on your local machine,
-compresses it, SCPs it to the VM, loads it with `docker load`, and restarts
-the container in one step. No build tools are needed on the VM.
+No build tools are needed on the VM.
 
 ---
 
@@ -162,12 +163,22 @@ zcat /tmp/r.log.gz > /opt/scripts/ovpn-master.log
 
 A standalone test program is included at `cmd/osstest/main.go` that verifies
 upload, list, download, and delete against your real bucket. It reads
-credentials from `~/.openvpn-bootstrap/credentials.json` on the operator's
-machine, or `/root/.ossutilconfig` inside the container:
+credentials from `/root/.ossutilconfig`:
 
 ```bash
 go run ./cmd/osstest
 ```
+
+---
+
+## Future plans
+
+**Multi-cloud storage support**
+
+Log archiving and the audit log browser currently require Alibaba Cloud OSS.
+The plan is to make the storage backend pluggable so you can point it at
+Google Cloud Storage or AWS S3 instead, with the same archive format and
+browser experience regardless of where the logs live.
 
 ---
 
