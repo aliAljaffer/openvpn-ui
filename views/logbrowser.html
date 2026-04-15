@@ -1,0 +1,136 @@
+{{ template "layout/base.html" . }}
+
+{{define "head"}}
+<title>OpenVPN - Audit Logs</title>
+{{end}}
+
+{{define "body"}}
+
+<!-- Filter card -->
+<div class="card card-default">
+  <div class="card-header">
+    <h3 class="card-title">Audit Log Browser</h3>
+    <div class="card-tools">
+      <button type="button" class="btn btn-tool" data-card-widget="collapse">
+        <i class="fa fa-minus"></i>
+      </button>
+    </div>
+  </div>
+  <div class="card-body">
+    <form method="get" action="/logs/browse">
+      <div class="row">
+        <div class="col-md-4">
+          <div class="form-group">
+            <label>Archive</label>
+            <select name="archive" class="form-control">
+              {{range .ArchiveEntries}}
+              <option value="{{.Filename}}" {{if eq .Filename $.SelectedArchive}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>User</label>
+            <select name="cn" class="form-control">
+              <option value="">All Users</option>
+              {{range .CNList}}
+              <option value="{{.}}" {{if eq . $.FilterCN}}selected{{end}}>{{.}}</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+        <div class="col-md-5">
+          <div class="form-group">
+            <label>&nbsp;</label>
+            <div>
+              <button type="submit" class="btn btn-primary">
+                <i class="fa fa-filter"></i> Filter
+              </button>
+              {{if .SelectedArchive}}
+              <a href="/logs/browse/export?archive={{.SelectedArchive}}&cn={{.FilterCN}}"
+                 class="btn btn-default ml-2">
+                <i class="fa fa-download"></i> Export CSV
+              </a>
+              {{end}}
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="alert alert-danger">
+  <i class="fa fa-exclamation-triangle"></i> <strong>Error:</strong> {{.Error}}
+</div>
+
+{{else if .Events}}
+<div class="card card-default">
+  <div class="card-header">
+    <h3 class="card-title">
+      Sessions
+      {{if .FilterCN}}— <strong>{{.FilterCN}}</strong>{{end}}
+      <small class="text-muted ml-2">{{.SelectedArchive}}</small>
+    </h3>
+    <div class="card-tools">
+      <button type="button" class="btn btn-tool" data-card-widget="collapse">
+        <i class="fa fa-minus"></i>
+      </button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped no-margin">
+        <thead>
+          <tr>
+            <th>User CN</th>
+            <th>Source IP</th>
+            <th>Connected At</th>
+            <th>Disconnected At</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Events}}
+          <tr>
+            <td><strong>{{.CN}}</strong></td>
+            <td><code>{{.SourceIP}}</code></td>
+            <td>{{.ConnectedAt}}</td>
+            <td>
+              {{if .IsActive}}
+                <span class="badge bg-success" style="font-size: 90%;">Active</span>
+              {{else}}
+                {{.DisconnectedAt}}
+              {{end}}
+            </td>
+            <td>
+              {{if .Duration}}{{.Duration}}{{else}}—{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    <small class="text-muted">{{len .Events}} session(s)</small>
+  </div>
+</div>
+
+{{else if .SelectedArchive}}
+<div class="alert alert-info">
+  <i class="fa fa-info-circle"></i>
+  No events found in <strong>{{.SelectedArchive}}</strong>
+  {{if .FilterCN}}for user <strong>{{.FilterCN}}</strong>{{end}}.
+  The log format may not match the expected journald short-iso pattern.
+</div>
+
+{{else if not .ArchiveEntries}}
+<div class="alert alert-warning">
+  <i class="fa fa-exclamation-circle"></i>
+  No log archives found in the OSS bucket. Archived logs will appear here after the first
+  end-of-day rotation (23:59 UTC) or when the master log exceeds 10 MB.
+</div>
+{{end}}
+
+{{end}}

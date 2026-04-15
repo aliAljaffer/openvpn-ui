@@ -44,6 +44,10 @@
     <a href="{{urlfor "LogsController.Get"}}" class="nav-link">Logs</a>
   </li>
 
+  <li {{if compare .RouterPattern "/logs/browse"}}class="nav-item"{{end}}>
+    <a href="{{urlfor "LogBrowserController.Get"}}" class="nav-link">Audit Logs</a>
+  </li>
+
   <li {{if compare .RouterPattern "/map"}}class="nav-item"{{end}}>
     <a href="{{urlfor "MapViewController.Get"}}" class="nav-link">Map</a>
   </li>

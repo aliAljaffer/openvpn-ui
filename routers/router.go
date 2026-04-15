@@ -23,6 +23,8 @@ func Init(configDir string) {
 	web.Router("/settings", &controllers.SettingsController{})
 	web.Router("/ov/config", &controllers.OVConfigController{})
 	web.Router("/logs", &controllers.LogsController{})
+	web.Router("/logs/browse", &controllers.LogBrowserController{}, "get:Get")
+	web.Router("/logs/browse/export", &controllers.LogBrowserController{}, "get:Export")
 	web.Router("/map", &controllers.MapViewController{})
 	web.Router("/ov/clientconfig", &controllers.OVClientConfigController{ConfigDir: configDir})
 	web.Router("/easyrsa/config", &controllers.EasyRSAConfigController{ConfigDir: configDir})
