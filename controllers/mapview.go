@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"html/template"
+	"time"
 
 	"github.com/beego/beego/v2/core/logs"
 	beegoWeb "github.com/beego/beego/v2/server/web"
@@ -61,8 +62,76 @@ func (c *MapViewController) Get() {
 		}
 	}
 
+	// Append recently-disconnected clients as faded markers.
+	geoClients = appendRecentDisconnects(geoClients, status.ClientList, dbPath)
+
 	clientsJSON, _ := json.Marshal(geoClients)
 	c.Data["MapClientsJSON"] = template.JS(clientsJSON)
 	c.Data["GeoIPError"] = ""
 	c.TplName = "mapview.html"
+}
+
+const (
+	masterLogPath   = "/opt/scripts/ovpn-master.log"
+	recentWindow    = 4 * time.Hour
+)
+
+// appendRecentDisconnects parses the current master log, finds sessions that
+// ended within the last recentWindow and are not currently in the MI client list,
+// geo-enriches them, and appends them to geoClients as IsDisconnected entries.
+func appendRecentDisconnects(geoClients []lib.GeoClient, active []*mi.OVClient, dbPath string) []lib.GeoClient {
+	sessions, err := lib.ParseLogFile(masterLogPath)
+	if err != nil || len(sessions) == 0 {
+		return geoClients
+	}
+
+	activeCNs := map[string]bool{}
+	for _, c := range active {
+		activeCNs[c.CommonName] = true
+	}
+
+	cutoff := time.Now().Add(-recentWindow)
+	var recentIPs []string
+	var recentSessions []lib.AuditEvent
+	// Deduplicate: keep only the most recent disconnect per CN.
+	latest := map[string]lib.AuditEvent{}
+	for _, ev := range sessions {
+		if ev.DisconnectTime.IsZero() || ev.DisconnectTime.Before(cutoff) {
+			continue
+		}
+		if activeCNs[ev.CN] {
+			continue
+		}
+		if prev, ok := latest[ev.CN]; !ok || ev.DisconnectTime.After(prev.DisconnectTime) {
+			latest[ev.CN] = ev
+		}
+	}
+	for _, ev := range latest {
+		recentIPs = append(recentIPs, ev.SourceIP)
+		recentSessions = append(recentSessions, ev)
+	}
+
+	if len(recentSessions) == 0 {
+		return geoClients
+	}
+
+	geoMap := lib.GeoLookupBatch(dbPath, recentIPs)
+	for _, ev := range recentSessions {
+		gc := lib.GeoClient{
+			IsDisconnected: true,
+			DisconnectedAt: ev.DisconnectTime.Format("15:04:05"),
+			Duration:       ev.Duration,
+		}
+		gc.CommonName = ev.CN
+		gc.RealAddress = ev.SourceIP
+		if loc, ok := geoMap[ev.SourceIP]; ok {
+			gc.Country = loc.Country
+			gc.City = loc.City
+			gc.Latitude = loc.Latitude
+			gc.Longitude = loc.Longitude
+			gc.Located = loc.Latitude != 0 || loc.Longitude != 0
+		}
+		geoClients = append(geoClients, gc)
+	}
+	return geoClients
 }

@@ -1,48 +1,96 @@
 package lib
 
 import (
+	"bufio"
 	"fmt"
-	"os/exec"
+	"os"
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
-// ListOSSArchives returns filenames (e.g. "openvpn-logs-2024-04-14-235959.log.gz")
-// of log archives stored in the OSS bucket, sorted newest-first.
-// ossutil reads credentials from ~/.ossutilconfig (mounted into the container).
-func ListOSSArchives(bucket, endpoint string) ([]string, error) {
-	out, err := exec.Command("ossutil", "ls",
-		"oss://"+bucket+"/",
-		"--endpoint", endpoint).CombinedOutput()
+// loadOSSCredentials parses /root/.ossutilconfig (mounted into the container)
+// and returns the access key ID and secret.
+func loadOSSCredentials() (akid, akSecret string, err error) {
+	const configPath = "/root/.ossutilconfig"
+	f, err := os.Open(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("ossutil ls: %s: %w", strings.TrimSpace(string(out)), err)
+		return "", "", fmt.Errorf("cannot open %s: %w", configPath, err)
 	}
-	var files []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasSuffix(line, ".log.gz") {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				// Last field is the full OSS path, e.g. oss://bucket/file.log.gz
-				files = append(files, path.Base(parts[len(parts)-1]))
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if k, v, ok := strings.Cut(line, "="); ok {
+			switch strings.TrimSpace(k) {
+			case "accessKeyID":
+				akid = strings.TrimSpace(v)
+			case "accessKeySecret":
+				akSecret = strings.TrimSpace(v)
 			}
 		}
 	}
-	// Filenames encode the rotation timestamp so lexicographic reverse == newest-first.
+	if akid == "" || akSecret == "" {
+		return "", "", fmt.Errorf("accessKeyID/accessKeySecret not found in %s", configPath)
+	}
+	return akid, akSecret, nil
+}
+
+func ossClient(endpoint string) (*oss.Client, error) {
+	akid, akSecret, err := loadOSSCredentials()
+	if err != nil {
+		return nil, err
+	}
+	ep := endpoint
+	if !strings.HasPrefix(ep, "http") {
+		ep = "https://" + ep
+	}
+	return oss.New(ep, akid, akSecret)
+}
+
+// ListOSSArchives returns filenames of log archives stored in the OSS bucket,
+// sorted newest-first. Credentials are read from /root/.ossutilconfig.
+func ListOSSArchives(bucket, endpoint string) ([]string, error) {
+	client, err := ossClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	bkt, err := client.Bucket(bucket)
+	if err != nil {
+		return nil, fmt.Errorf("oss bucket: %w", err)
+	}
+	result, err := bkt.ListObjects(oss.Prefix("openvpn-logs-"), oss.MaxKeys(1000))
+	if err != nil {
+		return nil, fmt.Errorf("oss list: %w", err)
+	}
+	var files []string
+	for _, obj := range result.Objects {
+		name := path.Base(obj.Key)
+		if strings.HasSuffix(name, ".log.gz") {
+			files = append(files, name)
+		}
+	}
 	sort.Sort(sort.Reverse(sort.StringSlice(files)))
 	return files, nil
 }
 
 // DownloadOSSArchive fetches a named archive from OSS into localDir
-// and returns the full local path.
+// and returns the full local path. Credentials are read from /root/.ossutilconfig.
 func DownloadOSSArchive(bucket, endpoint, filename, localDir string) (string, error) {
-	dest := localDir + "/" + filename
-	src := "oss://" + bucket + "/" + filename
-	out, err := exec.Command("ossutil", "cp", src, dest,
-		"--endpoint", endpoint, "-f").CombinedOutput()
+	client, err := ossClient(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("ossutil cp: %s: %w", strings.TrimSpace(string(out)), err)
+		return "", err
+	}
+	bkt, err := client.Bucket(bucket)
+	if err != nil {
+		return "", fmt.Errorf("oss bucket: %w", err)
+	}
+	dest := localDir + "/" + filename
+	if err := bkt.GetObjectToFile(filename, dest); err != nil {
+		return "", fmt.Errorf("oss download %s: %w", filename, err)
 	}
 	return dest, nil
 }

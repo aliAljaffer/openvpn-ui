@@ -17,5 +17,5 @@ COPY build/assets/start.sh /opt/start.sh
 RUN chmod +x /opt/start.sh && mkdir -p /opt/openvpn-ui
 COPY --from=builder /go/src/github.com/d3vilh/openvpn-ui/openvpn-ui.tar.gz /tmp/openvpn-ui.tar.gz
 RUN tar -xzf /tmp/openvpn-ui.tar.gz -C /opt/openvpn-ui/ && rm /tmp/openvpn-ui.tar.gz
-EXPOSE 8080/tcp
+EXPOSE 8080/tcp 8443/tcp
 CMD ["/opt/start.sh"]

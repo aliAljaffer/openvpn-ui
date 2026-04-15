@@ -8,14 +8,64 @@ import (
 	geoip2 "github.com/oschwald/geoip2-golang"
 )
 
-// GeoClient wraps an OVClient with geographic coordinates.
+// GeoClient wraps an OVClient with geographic coordinates and optional
+// disconnect metadata for recently-disconnected sessions.
 type GeoClient struct {
 	mi.OVClient
-	Latitude  float64
-	Longitude float64
+	Latitude       float64
+	Longitude      float64
+	Country        string
+	City           string
+	Located        bool
+	IsDisconnected bool   // true for recently-disconnected clients (not in MI status)
+	DisconnectedAt string // human-readable disconnect time, e.g. "15:04:05"
+	Duration       string // session duration, e.g. "23m15s"
+}
+
+// GeoLocation holds a resolved geographic position for an IP address.
+type GeoLocation struct {
 	Country   string
 	City      string
-	Located   bool
+	Latitude  float64
+	Longitude float64
+}
+
+// GeoLookupBatch opens the GeoLite2-City database at dbPath, looks up every IP
+// in the ips slice, and returns a map from IP string to GeoLocation.
+// IPs that are private, loopback, or not found in the DB are omitted from the map.
+// If dbPath is empty or the database cannot be opened the returned map is nil (not an error).
+func GeoLookupBatch(dbPath string, ips []string) map[string]GeoLocation {
+	if dbPath == "" {
+		return nil
+	}
+	db, err := geoip2.Open(dbPath)
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	result := make(map[string]GeoLocation, len(ips))
+	for _, rawIP := range ips {
+		ip := net.ParseIP(rawIP)
+		if ip == nil || ip.IsLoopback() || ip.IsPrivate() {
+			continue
+		}
+		rec, err := db.City(ip)
+		if err != nil || rec == nil {
+			continue
+		}
+		loc := GeoLocation{
+			Country:   rec.Country.Names["en"],
+			City:      rec.City.Names["en"],
+			Latitude:  rec.Location.Latitude,
+			Longitude: rec.Location.Longitude,
+		}
+		if loc.Country == "" && loc.City == "" {
+			continue
+		}
+		result[rawIP] = loc
+	}
+	return result
 }
 
 // EnrichWithGeo looks up each client's real IP in the MaxMind GeoLite2-City

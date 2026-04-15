@@ -23,6 +23,8 @@ type ArchiveEntry struct {
 type EventRow struct {
 	CN             string
 	SourceIP       string
+	Country        string
+	City           string
 	ConnectedAt    string
 	DisconnectedAt string // empty when session is still active
 	Duration       string // empty when session is still active
@@ -100,6 +102,14 @@ func (c *LogBrowserController) Get() {
 	sort.Strings(cnList)
 	c.Data["CNList"] = cnList
 
+	// Geo-enrich all source IPs in one pass (DB opened once).
+	dbPath, _ := web.AppConfig.String("GeoipDbPath")
+	ips := make([]string, 0, len(events))
+	for _, ev := range events {
+		ips = append(ips, ev.SourceIP)
+	}
+	geoMap := lib.GeoLookupBatch(dbPath, ips)
+
 	// Build display rows, applying CN filter.
 	const tsFmt = "2006-01-02 15:04:05"
 	var rows []EventRow
@@ -113,6 +123,10 @@ func (c *LogBrowserController) Get() {
 			ConnectedAt: ev.ConnectTime.Format(tsFmt),
 			IsActive:    ev.DisconnectTime.IsZero(),
 			Duration:    ev.Duration,
+		}
+		if loc, ok := geoMap[ev.SourceIP]; ok {
+			row.Country = loc.Country
+			row.City = loc.City
 		}
 		if !ev.DisconnectTime.IsZero() {
 			row.DisconnectedAt = ev.DisconnectTime.Format(tsFmt)
@@ -148,6 +162,13 @@ func (c *LogBrowserController) Export() {
 		return
 	}
 
+	dbPath, _ := web.AppConfig.String("GeoipDbPath")
+	ips := make([]string, 0, len(events))
+	for _, ev := range events {
+		ips = append(ips, ev.SourceIP)
+	}
+	geoMap := lib.GeoLookupBatch(dbPath, ips)
+
 	filename := strings.TrimSuffix(filepath.Base(archive), ".gz")
 	c.Ctx.Output.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Ctx.Output.Header("Content-Disposition",
@@ -155,7 +176,7 @@ func (c *LogBrowserController) Export() {
 
 	const tsFmt = "2006-01-02 15:04:05"
 	w := csv.NewWriter(c.Ctx.ResponseWriter)
-	_ = w.Write([]string{"User CN", "Source IP", "Connect Time", "Disconnect Time", "Duration"})
+	_ = w.Write([]string{"User CN", "Source IP", "Country", "City", "Connect Time", "Disconnect Time", "Duration"})
 	for _, ev := range events {
 		if filterCN != "" && ev.CN != filterCN {
 			continue
@@ -164,9 +185,15 @@ func (c *LogBrowserController) Export() {
 		if !ev.DisconnectTime.IsZero() {
 			discStr = ev.DisconnectTime.Format(tsFmt)
 		}
+		country, city := "", ""
+		if loc, ok := geoMap[ev.SourceIP]; ok {
+			country, city = loc.Country, loc.City
+		}
 		_ = w.Write([]string{
 			ev.CN,
 			ev.SourceIP,
+			country,
+			city,
 			ev.ConnectTime.Format(tsFmt),
 			discStr,
 			ev.Duration,

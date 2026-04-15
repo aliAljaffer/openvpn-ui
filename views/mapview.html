@@ -78,16 +78,26 @@
 
   (clients || []).forEach(function (c) {
     if (c.Located) {
-      var popup =
-        '<b>' + c.CommonName + '</b><br>' +
-        '<span class="text-muted">' + c.RealAddress + '</span><br>' +
-        (c.City ? c.City + ', ' : '') + c.Country + '<br>' +
-        '<small>&#8595; ' + fmtBytes(c.BytesReceived) +
-        ' &nbsp; &#8593; ' + fmtBytes(c.BytesSent) + '</small><br>' +
-        '<small>Since: ' + c.ConnectedSince + '</small>';
-      L.marker([c.Latitude, c.Longitude])
-        .addTo(map)
-        .bindPopup(popup);
+      var popup, marker;
+      if (c.IsDisconnected) {
+        popup =
+          '<b>' + c.CommonName + '</b> <span style="color:#999">(disconnected)</span><br>' +
+          '<span class="text-muted">' + c.RealAddress + '</span><br>' +
+          (c.City ? c.City + ', ' : '') + c.Country + '<br>' +
+          '<small>Disconnected at: ' + c.DisconnectedAt + '</small><br>' +
+          (c.Duration ? '<small>Duration: ' + c.Duration + '</small>' : '');
+        marker = L.marker([c.Latitude, c.Longitude], { opacity: 0.35 });
+      } else {
+        popup =
+          '<b>' + c.CommonName + '</b><br>' +
+          '<span class="text-muted">' + c.RealAddress + '</span><br>' +
+          (c.City ? c.City + ', ' : '') + c.Country + '<br>' +
+          '<small>&#8595; ' + fmtBytes(c.BytesReceived) +
+          ' &nbsp; &#8593; ' + fmtBytes(c.BytesSent) + '</small><br>' +
+          '<small>Since: ' + c.ConnectedSince + '</small>';
+        marker = L.marker([c.Latitude, c.Longitude]);
+      }
+      marker.addTo(map).bindPopup(popup);
     } else if (unlocatedBody) {
       hasUnlocated = true;
       var row =

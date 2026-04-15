@@ -87,6 +87,7 @@
           <tr>
             <th>User CN</th>
             <th>Source IP</th>
+            <th>Location</th>
             <th>Connected At</th>
             <th>Disconnected At</th>
             <th>Duration</th>
@@ -97,6 +98,9 @@
           <tr>
             <td><strong>{{.CN}}</strong></td>
             <td><code>{{.SourceIP}}</code></td>
+            <td>
+              {{if .City}}{{.City}}, {{end}}{{if .Country}}{{.Country}}{{else}}<span class="text-muted">—</span>{{end}}
+            </td>
             <td>{{.ConnectedAt}}</td>
             <td>
               {{if .IsActive}}

@@ -22,12 +22,19 @@ type AuditEvent struct {
 
 // journald short-iso line format:
 //
-//	2025-04-14T16:23:01+0000 hostname openvpn[pid]: CN/IP:PORT MESSAGE
+//	2026-04-15T14:49:28+0800 openvpn openvpn[858]: tcp4-server:IP:PORT [CN] Peer Connection Initiated with [AF_INET]IP:PORT
+//	2026-04-15T15:15:14+0800 openvpn openvpn[858]: CN/tcp4-server:IP:PORT Connection reset, restarting [-1]
 var (
+	// connectRE matches the "Peer Connection Initiated" line where the CN appears in [brackets].
+	// Groups: (1) timestamp  (2) source IP  (3) CN
 	connectRE = regexp.MustCompile(
-		`^(\S+)\s+\S+\s+openvpn\[\d+\]:\s+(\S+)/(\d+\.\d+\.\d+\.\d+):\d+\s+MULTI:\s+Learn`)
+		`^(\S+)\s+\S+\s+openvpn\[\d+\]:\s+\S+:(\d+\.\d+\.\d+\.\d+):\d+\s+\[([^\]]+)\]\s+Peer Connection Initiated`)
+
+	// disconnectRE matches lines whose context prefix is CN/tcp4-server:IP:PORT and that
+	// signal the end of the session ("Connection reset", SIGUSR1/SIGTERM client-instance lines).
+	// Groups: (1) timestamp  (2) CN  (3) source IP
 	disconnectRE = regexp.MustCompile(
-		`^(\S+)\s+\S+\s+openvpn\[\d+\]:\s+(\S+)/(\d+\.\d+\.\d+\.\d+):\d+\s+(Connection reset|client-instance exiting)`)
+		`^(\S+)\s+\S+\s+openvpn\[\d+\]:\s+([^/\s]+)/\S+:(\d+\.\d+\.\d+\.\d+):\d+\s+(?:Connection reset|client-instance (?:restarting|exiting))`)
 )
 
 const tsLayout = "2006-01-02T15:04:05-0700"
@@ -64,14 +71,16 @@ func ParseLogFile(filePath string) ([]AuditEvent, error) {
 
 		if m := connectRE.FindStringSubmatch(line); m != nil {
 			ts, _ := time.Parse(tsLayout, m[1])
-			key := m[2] + "/" + m[3]
+			// m[2]=sourceIP, m[3]=CN
+			key := m[3] + "/" + m[2]
 			open[key] = &AuditEvent{
-				CN:          m[2],
-				SourceIP:    m[3],
+				CN:          m[3],
+				SourceIP:    m[2],
 				ConnectTime: ts,
 			}
 		} else if m := disconnectRE.FindStringSubmatch(line); m != nil {
 			ts, _ := time.Parse(tsLayout, m[1])
+			// m[2]=CN, m[3]=sourceIP
 			key := m[2] + "/" + m[3]
 			if ev, ok := open[key]; ok {
 				ev.DisconnectTime = ts

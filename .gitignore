@@ -9,6 +9,9 @@ build/qrencode
 openvpn-ui.tar.gz
 qrencode
 
+# Go vendor directory — Docker rebuilds this from go.mod/go.sum at image build time
+vendor/
+
 # Compiled binary
 openvpn-ui
 
