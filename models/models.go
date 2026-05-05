@@ -173,6 +173,10 @@ func CreateDefaultOVConfig(configDir string, ovConfigPath string, address string
 }
 
 func CreateDefaultOVClientConfig(configDir string, ovConfigPath string, address string, network string) {
+	serverAddr, _ := web.AppConfig.String("ServerAddress")
+	if serverAddr == "" {
+		serverAddr = "YOUR_SERVER_IP"
+	}
 	c := OVClientConfig{
 		Profile: "default",
 		Config: clientconfig.Config{
@@ -180,7 +184,7 @@ func CreateDefaultOVClientConfig(configDir string, ovConfigPath string, address 
 			Device:            "tun",
 			Port:              1194,
 			Proto:             "udp",
-			ServerAddress:     "127.0.0.1",
+			ServerAddress:     serverAddr,
 			OpenVpnServerPort: "1194",
 			ResolveRetry:      "resolv-retry infinite",
 			OVClientUser:      "nobody",
@@ -224,12 +228,12 @@ func CreateDefaultEasyRSAConfig(configDir string, easyRSAPath string, address st
 		Profile: "default",
 		Config: easyrsaconfig.Config{
 			EasyRSADN:          "org",
-			EasyRSAReqCountry:  "SA",
-			EasyRSAReqProvince: "RI",
-			EasyRSAReqCity:     "Riyadh",
-			EasyRSAReqOrg:      "Saudi Azm",
-			EasyRSAReqEmail:    "xxx@azm.sa",
-			EasyRSAReqOu:       "AZMCIT",
+			EasyRSAReqCountry:  "US",
+			EasyRSAReqProvince: "CA",
+			EasyRSAReqCity:     "San Francisco",
+			EasyRSAReqOrg:      "My Organization",
+			EasyRSAReqEmail:    "admin@example.com",
+			EasyRSAReqOu:       "VPN",
 			EasyRSAReqCn:       "server",
 			EasyRSAKeySize:     2048,
 			EasyRSACaExpire:    3650,
