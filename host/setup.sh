@@ -18,7 +18,7 @@
 #   --oss-access-key-secret <sk>    OSS access key secret
 #   --oss-bucket <name>             OSS bucket name
 #   --oss-endpoint <endpoint>       OSS endpoint (default: oss-me-central-1.aliyuncs.com)
-#   --domain <domain>               Domain for HTTPS / Let's Encrypt
+#   --domain <domain>               Domain for Let's Encrypt (HTTPS is always on; self-signed used if omitted)
 #   --admin-email <email>           Email for Let's Encrypt (required with --domain)
 #   --client-add-form-url <url>     URL shown in place of the Create button (default: Jira form)
 #   --client-add-enabled            Re-enable direct client creation (overrides default)
@@ -329,9 +329,28 @@ setup_tls() {
   log "TLS configured. Renewal cron added."
 }
 
+setup_selfsigned_tls() {
+  local cert_file="${UI_CONF_DIR}/selfsigned.crt"
+  local key_file="${UI_CONF_DIR}/selfsigned.key"
+  if [[ -f "$cert_file" && -f "$key_file" ]]; then
+    log "Self-signed TLS cert already exists — skipping."
+    return
+  fi
+  log "Generating self-signed TLS certificate..."
+  local server_ip
+  server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
+    || hostname -I | awk '{print $1}')
+  openssl req -x509 -nodes -newkey rsa:2048 \
+    -keyout "$key_file" -out "$cert_file" \
+    -days 3650 -subj "/CN=${server_ip}" \
+    -addext "subjectAltName=IP:${server_ip}" 2>/dev/null
+  log "Self-signed TLS cert generated."
+}
+
 write_app_conf() {
-  local geoip_path="${1:-}" oss_bucket="${2:-}" oss_endpoint="${3:-}" domain="${4:-}"
-  local client_add_disabled="${5:-true}" client_add_form_url="${6:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local geoip_path="${1:-}" oss_bucket="${2:-}" oss_endpoint="${3:-}"
+  local tls_cert="${4:-}" tls_key="${5:-}"
+  local client_add_disabled="${6:-true}" client_add_form_url="${7:-$DEFAULT_CLIENT_ADD_FORM_URL}"
 
   local server_ip
   server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
@@ -360,12 +379,12 @@ ClientAddDisabled          = ${client_add_disabled}
 ClientAddFormURL           = ${client_add_form_url}
 APPCONF
 
-  if [[ -n "$domain" ]]; then
+  if [[ -n "$tls_cert" && -n "$tls_key" ]]; then
     cat >> "$APP_CONF" <<APPCONF_TLS
 EnableHTTPS                = true
 HTTPSPort                  = ${UI_HTTPS_PORT}
-HTTPSCertFile              = /etc/letsencrypt/live/${domain}/fullchain.pem
-HTTPSKeyFile               = /etc/letsencrypt/live/${domain}/privkey.pem
+HTTPSCertFile              = ${tls_cert}
+HTTPSKeyFile               = ${tls_key}
 APPCONF_TLS
   fi
   log "app.conf written."
@@ -497,9 +516,18 @@ run_install() {
     log "MaxMind not configured — map markers disabled."
   fi
 
-  [[ -n "$domain" ]] && setup_tls "$domain" "$admin_email"
+  local tls_cert="" tls_key=""
+  if [[ -n "$domain" ]]; then
+    setup_tls "$domain" "$admin_email"
+    tls_cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    tls_key="/etc/letsencrypt/live/${domain}/privkey.pem"
+  else
+    setup_selfsigned_tls
+    tls_cert="${UI_CONF_DIR}/selfsigned.crt"
+    tls_key="${UI_CONF_DIR}/selfsigned.key"
+  fi
 
-  write_app_conf "$geoip_path" "$oss_bucket" "$oss_endpoint" "$domain" "$client_add_disabled" "$client_add_form_url"
+  write_app_conf "$geoip_path" "$oss_bucket" "$oss_endpoint" "$tls_cert" "$tls_key" "$client_add_disabled" "$client_add_form_url"
   write_compose "$admin_user" "$admin_pass" "$geoip_enabled" "$oss_enabled" "$domain"
   setup_cron
   print_next_steps
@@ -569,13 +597,14 @@ run_init() {
     client_add_form_url=$(ask_value "Form URL" "$DEFAULT_CLIENT_ADD_FORM_URL")
   fi
 
-  # HTTPS / TLS — optional
+  # HTTPS / TLS — always on; optionally use Let's Encrypt
   local domain="" admin_email=""
   echo ""
-  echo "--- HTTPS / TLS (optional) ---"
-  echo "Secures the UI with a free Let's Encrypt certificate."
-  echo "Requires a domain name pointed at this server and port 80 open temporarily."
-  if ask_yn "Enable HTTPS?"; then
+  echo "--- HTTPS / TLS ---"
+  echo "The UI always uses HTTPS. By default, a self-signed certificate is generated."
+  echo "Optionally, provide a domain name to get a free Let's Encrypt certificate instead."
+  echo "(Requires the domain to point at this server and port 80 to be open temporarily.)"
+  if ask_yn "Use Let's Encrypt with a domain name?"; then
     domain=$(ask_value "Domain name (e.g. vpn.example.com)")
     admin_email=$(ask_value "Email for Let's Encrypt")
   fi
