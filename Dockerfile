@@ -11,7 +11,10 @@ RUN bee pack -exr='^vendor|^ace.tar.bz2|^data.db|^build|^README.md|^docs'
 
 # Stage 2: runtime image (Alpine)
 FROM alpine:3.19
-RUN apk add --no-cache bash easy-rsa curl jq oath-toolkit-oathtool
+# iptables is required for the port-forwarding controller, which shells out to
+# /opt/scripts/port-forward.sh (NAT rule management). The container also needs
+# cap_add: NET_ADMIN at runtime — see host/setup.sh write_compose().
+RUN apk add --no-cache bash easy-rsa curl jq oath-toolkit-oathtool iptables
 WORKDIR /opt
 COPY build/assets/start.sh /opt/start.sh
 RUN chmod +x /opt/start.sh && mkdir -p /opt/openvpn-ui

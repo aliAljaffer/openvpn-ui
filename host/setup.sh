@@ -22,6 +22,7 @@
 #   --admin-email <email>           Email for Let's Encrypt (required with --domain)
 #   --client-add-form-url <url>     URL shown in place of the Create button (default: Jira form)
 #   --client-add-enabled            Re-enable direct client creation (overrides default)
+#   --port-forward <lp:ip:dp>       Forward TCP <lp> on this VM to <ip>:<dp> (repeatable)
 
 set -euo pipefail
 
@@ -37,6 +38,10 @@ APP_CONF="${UI_CONF_DIR}/app.conf"
 UI_PORT=8080
 UI_HTTPS_PORT=8443
 DEFAULT_CLIENT_ADD_FORM_URL="https://saudiazmco.atlassian.net/jira/software/form/5853af35-6b8b-4644-84a5-682940f49914"
+
+# Repeatable --port-forward specs collected during flag parsing or interactive init.
+# Each element is "<listen-port>:<dest-ip>:<dest-port>".
+PORT_FORWARDS=()
 
 GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; RESET='\033[0m'
 log()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
@@ -87,6 +92,8 @@ Flags for 'install':
   --install-docker                Install Docker automatically if not present
   --client-add-form-url <url>     URL shown instead of the Create button (default: Jira form)
   --client-add-enabled            Re-enable direct client creation in the UI
+  --port-forward <lp:ip:dp>       Forward TCP <lp> on this VM to <ip>:<dp>. Repeatable.
+                                  Example: --port-forward 8443:10.0.1.5:443
 EOF
   exit 1
 }
@@ -109,7 +116,7 @@ _setup_openvpn_ui() {
   case "\$prev" in
     --admin-username|--admin-password|--maxmind-account-id|--maxmind-license-key| \\
     --oss-access-key-id|--oss-access-key-secret|--oss-bucket|--oss-endpoint| \\
-    --domain|--admin-email|--client-add-form-url)
+    --domain|--admin-email|--client-add-form-url|--port-forward)
       return 0 ;;
   esac
 
@@ -133,6 +140,7 @@ _setup_openvpn_ui() {
         --oss-access-key-id --oss-access-key-secret --oss-bucket --oss-endpoint
         --domain --admin-email
         --client-add-form-url --client-add-enabled
+        --port-forward
       " -- "\$cur") ) ;;
   esac
 }
@@ -404,6 +412,8 @@ services:
       - OPENVPN_ADMIN_USERNAME=${admin_user}
       - OPENVPN_ADMIN_PASSWORD=${admin_pass}
     network_mode: host
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ${OPENVPN_CONF_DIR}:/etc/openvpn
       - ${OPENVPN_CONF_DIR}/easy-rsa:/usr/share/easy-rsa
@@ -411,6 +421,8 @@ services:
       - /opt/openvpn-ui/conf:/opt/openvpn-ui/conf
       - /opt/scripts:/opt/scripts
       - /root:/root
+      - /etc/iptables:/etc/iptables
+      - /etc/sysctl.d:/etc/sysctl.d
 COMPOSE
     [[ "$oss_enabled"   == "true" ]] && echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro"
     [[ "$geoip_enabled" == "true" ]] && echo "      - /usr/share/GeoIP:/usr/share/GeoIP:ro"
@@ -421,6 +433,36 @@ COMPOSE
     echo "    restart: always"
   } > "$UI_COMPOSE"
   log "docker-compose.yml written."
+}
+
+setup_iptables_persistence() {
+  # Always install iptables-persistent on the host so iptables rules survive
+  # reboots regardless of whether they are added via setup.sh --port-forward,
+  # /opt/scripts/port-forward.sh, or the openvpn-ui Port-forwarding page.
+  # The UI runs from an Alpine container that has the iptables binary but not
+  # apt-get, so the host is the only place that can install netfilter-persistent.
+  if dpkg -s iptables-persistent >/dev/null 2>&1; then return; fi
+  log "Installing iptables-persistent on host..."
+  echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" \
+    | debconf-set-selections
+  echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" \
+    | debconf-set-selections
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent \
+    >/dev/null 2>&1
+  mkdir -p /etc/iptables
+  log "iptables-persistent installed."
+}
+
+apply_port_forwards() {
+  [[ ${#PORT_FORWARDS[@]} -eq 0 ]] && return 0
+  local spec lp di dp
+  for spec in "${PORT_FORWARDS[@]}"; do
+    [[ "$spec" =~ ^[0-9]+:[0-9.]+:[0-9]+$ ]] \
+      || err "Invalid --port-forward spec '${spec}'. Expected <listen-port>:<dest-ip>:<dest-port>."
+    IFS=':' read -r lp di dp <<< "$spec"
+    log "Configuring port forward: tcp/${lp} -> ${di}:${dp}"
+    "${SCRIPTS_DST}/port-forward.sh" add "$lp" "$di" "$dp"
+  done
 }
 
 setup_cron() {
@@ -530,6 +572,8 @@ run_install() {
   write_app_conf "$geoip_path" "$oss_bucket" "$oss_endpoint" "$tls_cert" "$tls_key" "$client_add_disabled" "$client_add_form_url"
   write_compose "$admin_user" "$admin_pass" "$geoip_enabled" "$oss_enabled" "$domain"
   setup_cron
+  setup_iptables_persistence
+  apply_port_forwards
   print_next_steps
 }
 
@@ -597,6 +641,23 @@ run_init() {
     client_add_form_url=$(ask_value "Form URL" "$DEFAULT_CLIENT_ADD_FORM_URL")
   fi
 
+  # Port forwarding — optional, repeatable
+  echo ""
+  echo "--- Port Forwarding (optional) ---"
+  echo "Forward TCP traffic on a port of this VM to an intranet <ip>:<port>."
+  echo "Useful when VPN clients need access to a service that is otherwise unreachable."
+  if ask_yn "Add port-forward rules?"; then
+    while true; do
+      local pf_lp pf_di pf_dp
+      pf_lp=$(ask_value "Listen port (on this VM)")
+      [[ -z "$pf_lp" ]] && { warn "Empty port — stopping."; break; }
+      pf_di=$(ask_value "Destination IP")
+      pf_dp=$(ask_value "Destination port")
+      PORT_FORWARDS+=("${pf_lp}:${pf_di}:${pf_dp}")
+      ask_yn "Add another rule?" || break
+    done
+  fi
+
   # HTTPS / TLS — always on; optionally use Let's Encrypt
   local domain="" admin_email=""
   echo ""
@@ -662,6 +723,9 @@ while [[ $# -gt 0 ]]; do
     --install-docker)        INSTALL_DOCKER="true";                shift   ;;
     --client-add-form-url)   CLIENT_ADD_FORM_URL="$2";            shift 2 ;;
     --client-add-enabled)    CLIENT_ADD_DISABLED="false"; CLIENT_ADD_FORM_URL=""; shift ;;
+    --port-forward)
+      [[ -n "${2:-}" ]] || err "--port-forward requires <listen-port>:<dest-ip>:<dest-port>"
+      PORT_FORWARDS+=("$2"); shift 2 ;;
     *) err "Unknown flag: $1. Run '$0 install' with no flags to see usage." ;;
   esac
 done

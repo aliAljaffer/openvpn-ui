@@ -1,0 +1,135 @@
+{{ template "layout/base.html" . }}
+
+{{define "head"}}
+<title>OpenVPN - Port forwarding</title>
+{{end}}
+
+{{define "body"}}
+
+<div class="row">
+  <div class="col-md-12">
+    {{template "common/alert.html" .}}
+    {{if .ListError}}
+      <div class="alert alert-danger" role="alert">
+        Could not read current rules: {{ .ListError }}
+      </div>
+    {{end}}
+
+    <div class="card card-default">
+      <div class="card-header with-border">
+        <h3 class="card-title">Configured port-forward rules</h3>
+        <div class="pull-right card-tools">
+          <button type="button" class="btn btn-tool" data-card-widget="collapse">
+            <i class="fa fa-minus"></i></button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <p class="text-muted" style="margin-bottom: 10px;">
+          IPv4 forwarding:
+          {{if eq (printf "%d" .IPForward) "1"}}
+            <b style="color: #00a65a;">enabled</b>
+          {{else}}
+            <b style="color: #dd4b39;">disabled</b>
+          {{end}}
+        </p>
+
+        <div class="table-responsive">
+          <table class="table no-margin">
+            <thead>
+              <tr>
+                <th>Protocol</th>
+                <th>Listen port (this VM)</th>
+                <th>Destination</th>
+                <th style="width: 120px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{if .Rules}}
+                {{range .Rules}}
+                <tr>
+                  <td>tcp</td>
+                  <td><b>{{ .ListenPort }}</b></td>
+                  <td>{{ .DestIP }}:{{ .DestPort }}</td>
+                  <td>
+                    <form action="{{urlfor "PortForwardController.Delete"}}" method="post"
+                          onsubmit="return confirm('Remove forwarding for tcp/{{ .ListenPort }} → {{ .DestIP }}:{{ .DestPort }}?');"
+                          style="display: inline;">
+                      <input type="hidden" name="listen_port" value="{{ .ListenPort }}">
+                      {{ $.xsrfdata }}
+                      <button type="submit" class="btn btn-danger btn-xs">
+                        <i class="fa fa-trash"></i> Remove
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+                {{end}}
+              {{else}}
+                <tr>
+                  <td colspan="4" class="text-muted text-center">No forwarding rules configured.</td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-default">
+      <div class="card-header with-border">
+        <h3 class="card-title">Add a forwarding rule</h3>
+        <div class="pull-right card-tools">
+          <button type="button" class="btn btn-tool" data-card-widget="collapse">
+            <i class="fa fa-minus"></i></button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <p class="text-muted">
+          Forwards TCP traffic arriving on the chosen listen port on this VM to a
+          fixed intranet destination. Useful when VPN clients need to reach a
+          service that is only routable from this server.
+        </p>
+        <p class="text-muted">
+          <i class="fa fa-fw fa-exclamation-triangle" style="color: #f39c12;"></i>
+          Make sure the listen port is open in your cloud security group / firewall —
+          this only configures the VM-level NAT rule.
+        </p>
+        <p class="text-muted">
+          <i class="fa fa-fw fa-info-circle"></i>
+          Reserved ports the UI will refuse: {{ .ReservedPorts }}.
+        </p>
+
+        <form role="form" action="{{urlfor "PortForwardController.Post"}}" method="post">
+          <div class="row">
+            <div class="form-group col-md-3">
+              <label for="listen_port">Listen port</label>
+              <input type="number" class="form-control" id="listen_port" name="listen_port"
+                     min="1" max="65535" placeholder="e.g. 9090" required>
+              <span class="text-muted">Port on this VM that receives traffic.</span>
+            </div>
+
+            <div class="form-group col-md-5">
+              <label for="dest_ip">Destination IP</label>
+              <input type="text" class="form-control" id="dest_ip" name="dest_ip"
+                     pattern="^(\d{1,3}\.){3}\d{1,3}$" placeholder="e.g. 10.0.1.6" required>
+              <span class="text-muted">Intranet IPv4 address.</span>
+            </div>
+
+            <div class="form-group col-md-3">
+              <label for="dest_port">Destination port</label>
+              <input type="number" class="form-control" id="dest_port" name="dest_port"
+                     min="1" max="65535" placeholder="e.g. 443" required>
+              <span class="text-muted">Port at the destination.</span>
+            </div>
+          </div>
+
+          {{ .xsrfdata }}
+          <button type="submit" class="btn btn-primary" style="width: 145px;">Add rule</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{end}}

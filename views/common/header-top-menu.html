@@ -27,6 +27,10 @@
         <a href="{{urlfor "EasyRSAConfigController.Get"}}" class="dropdown-item">EasyRSA vars</a>
       </li>
 
+      <li {{if compare .RouterPattern "/portforward"}}class="dropdown-item"{{end}}>
+        <a href="{{urlfor "PortForwardController.Get"}}" class="dropdown-item">Port forwarding</a>
+      </li>
+
       <li {{if compare .RouterPattern "/dangerzone"}}class="dropdown-item"{{end}}>
         <a href="{{urlfor "DangerController.Get"}}" class="dropdown-item">Maintenance</a>
       </li>

@@ -34,6 +34,18 @@ extends it with production-oriented features specific to our deployment.
   alongside currently connected clients
 - Clicking a faded marker shows the CN, location, disconnect time, and duration
 
+**TCP port forwarding** (`host/scripts/port-forward.sh` + web UI at `/portforward`)
+- Forwards TCP traffic on a chosen listen port of the VPN VM to an internal
+  `<ip>:<port>`, useful when VPN clients need access to an intranet service
+  that isn't reachable any other way
+- Persistent across reboots (iptables-persistent + `/etc/sysctl.d`)
+- Multiple rules supported, identified by listen port for idempotency
+- Three management surfaces, all backed by the same script:
+  - During setup via `setup.sh --port-forward` (repeatable)
+  - On the VM via `port-forward.sh add|list|remove`
+  - In the browser at `Configuration → Port forwarding` (the web UI shells out
+    to `port-forward.sh` so CLI and UI never disagree)
+
 ---
 
 ## Setup
@@ -114,7 +126,11 @@ This is an interactive guided setup. It will ask you:
 1. **Admin username and password** — for logging into the web UI
 2. **Map view** — whether to enable it (requires a MaxMind account)
 3. **Audit log backup** — whether to enable it (requires an OSS bucket)
-4. **HTTPS** — whether to enable it (requires a domain name pointed at the VM)
+4. **Client creation** — whether direct creation is enabled in the UI, or
+   whether the Create button is replaced by a link to an external request form
+5. **Port forwarding** — optional TCP port-forward rules from the VPN VM to
+   internal `<ip>:<port>` destinations
+6. **HTTPS** — whether to enable it (requires a domain name pointed at the VM)
 
 Everything is optional except the password. If you skip map view or audit
 logs, those features are simply disabled — nothing else is affected.
@@ -382,6 +398,50 @@ your real bucket using credentials from `/root/.ossutilconfig`:
 go run ./cmd/osstest
 ```
 
+**Port forwarding**
+
+You can configure rules either during initial VM setup or at any later point.
+
+During setup — pass `--port-forward <listen-port>:<dest-ip>:<dest-port>` to
+`setup.sh install` (repeatable), or answer the port-forwarding question when
+running `setup.sh init`:
+
+```bash
+sudo ./host/setup.sh install --admin-password ... \
+  --port-forward 8443:10.0.1.5:443 \
+  --port-forward 9090:10.0.1.6:9090
+```
+
+After setup — run the management script directly on the VM:
+
+```bash
+sudo /opt/scripts/port-forward.sh add 8443 10.0.1.5 443
+sudo /opt/scripts/port-forward.sh list
+sudo /opt/scripts/port-forward.sh remove 8443
+```
+
+…or use the web UI at `Configuration → Port forwarding` for the same operations
+in the browser. The web UI shells out to `port-forward.sh` so the script remains
+the single source of truth — adding a rule via the UI and listing it on the VM
+will always agree.
+
+The iptables NAT rules persist across reboots via `iptables-persistent`, and
+IPv4 forwarding is persisted in `/etc/sysctl.d/99-openvpn-forward.conf`. To make
+the web UI able to mutate iptables, the openvpn-ui container is granted
+`cap_add: NET_ADMIN` and bind-mounts `/etc/iptables` and `/etc/sysctl.d` from
+the host (configured automatically by `setup.sh`). The container does **not**
+run privileged.
+
+> **Cloud security group:** these rules act on packets *after* they reach the
+> VM, so they only matter once the listen port is allowed in. Open the listen
+> port in your cloud provider's security group / firewall before adding a
+> port-forward rule.
+
+> **Reserved listen ports in the UI:** the web form refuses listen ports below
+> 2000 (well-known/system range), the SSH port (22), the openvpn-ui ports
+> (8080, 8443), and the OpenVPN server port. The CLI is intentionally permissive
+> — these guardrails apply only when adding a rule from the browser.
+
 ---
 
 ## Future plans
@@ -405,6 +465,17 @@ same idempotent, named-resource approach. Minimal IAM / IAM role definitions wil
 be provided for each so you know exactly what permissions to grant before running.
 The VM-side setup (`host/setup.sh`) and the local build-and-deploy flow (`host/deploy.sh`)
 are already cloud-agnostic and will work unchanged across all three providers.
+
+---
+
+**Centralized monitoring API**
+
+A read-only HTTP API on the openvpn-ui app that exposes live VPN telemetry —
+connected clients, recent disconnects, current port-forward rules, certificate
+inventory — for consumption by an internal central dashboard that aggregates
+across multiple VPN VMs. JSON over the existing HTTPS listener, gated by a
+single bearer token. Default-deny: until a token is configured the API
+returns 404, so the surface is invisible until you opt in.
 
 ---
 
