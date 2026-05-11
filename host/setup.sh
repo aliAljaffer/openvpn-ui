@@ -14,7 +14,10 @@
 #   --admin-password <pass>         Admin password (required)
 #   --maxmind-account-id <id>       MaxMind account ID — enables map view
 #   --maxmind-license-key <key>     MaxMind license key
-#   --oss-access-key-id <id>        OSS access key ID — enables audit log backup
+#   --storage-provider <name>       Log archive backend: local|oss (default: local)
+#   --local-log-dir <path>          Archive directory for --storage-provider=local
+#                                   (default: /var/log/openvpn-ui/archives)
+#   --oss-access-key-id <id>        OSS access key ID (required when --storage-provider=oss)
 #   --oss-access-key-secret <sk>    OSS access key secret
 #   --oss-bucket <name>             OSS bucket name
 #   --oss-endpoint <endpoint>       OSS endpoint (default: oss-me-central-1.aliyuncs.com)
@@ -38,6 +41,7 @@ APP_CONF="${UI_CONF_DIR}/app.conf"
 UI_PORT=8080
 UI_HTTPS_PORT=8443
 DEFAULT_CLIENT_ADD_FORM_URL="https://saudiazmco.atlassian.net/jira/software/form/5853af35-6b8b-4644-84a5-682940f49914"
+DEFAULT_LOCAL_LOG_DIR="/var/log/openvpn-ui/archives"
 
 # Repeatable --port-forward specs collected during flag parsing or interactive init.
 # Each element is "<listen-port>:<dest-ip>:<dest-port>".
@@ -83,7 +87,10 @@ Flags for 'install':
   --admin-password <pass>         Admin password (required)
   --maxmind-account-id <id>       MaxMind account ID — enables the map view
   --maxmind-license-key <key>     MaxMind license key
-  --oss-access-key-id <id>        Alibaba Cloud OSS access key ID
+  --storage-provider <name>       Log archive backend: local|oss (default: local)
+  --local-log-dir <path>          Archive directory for the local backend
+                                  (default: ${DEFAULT_LOCAL_LOG_DIR})
+  --oss-access-key-id <id>        Alibaba Cloud OSS access key ID (storage-provider=oss)
   --oss-access-key-secret <sk>    Alibaba Cloud OSS access key secret
   --oss-bucket <name>             OSS bucket name
   --oss-endpoint <endpoint>       OSS endpoint (default: oss-me-central-1.aliyuncs.com)
@@ -115,6 +122,7 @@ _setup_openvpn_ui() {
 
   case "\$prev" in
     --admin-username|--admin-password|--maxmind-account-id|--maxmind-license-key| \\
+    --storage-provider|--local-log-dir| \\
     --oss-access-key-id|--oss-access-key-secret|--oss-bucket|--oss-endpoint| \\
     --domain|--admin-email|--client-add-form-url|--port-forward)
       return 0 ;;
@@ -137,6 +145,7 @@ _setup_openvpn_ui() {
       COMPREPLY=( \$(compgen -W "
         --admin-username --admin-password
         --maxmind-account-id --maxmind-license-key
+        --storage-provider --local-log-dir
         --oss-access-key-id --oss-access-key-secret --oss-bucket --oss-endpoint
         --domain --admin-email
         --client-add-form-url --client-add-enabled
@@ -268,29 +277,18 @@ install_scripts() {
   log "Scripts installed."
 }
 
-install_ossutil() {
-  if command -v ossutil &>/dev/null; then
-    log "ossutil already installed."
-    return
-  fi
-  log "Installing ossutil..."
-  curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh \
-    -o /tmp/ossutil-install.sh
-  bash /tmp/ossutil-install.sh < /dev/null > /dev/null 2>&1
-  rm -f /tmp/ossutil-install.sh
-  log "ossutil installed."
+setup_storage_local() {
+  local dir="$1"
+  log "Configuring local log archive storage at ${dir}..."
+  mkdir -p "$dir"
+  chmod 755 "$dir"
+  log "Local archive directory ready."
 }
 
-write_ossconfig() {
-  cat > /root/.ossutilconfig <<OSSCONF
-[Credentials]
-language=EN
-accessKeyID=${1}
-accessKeySecret=${2}
-endpoint=${3}
-OSSCONF
-  chmod 600 /root/.ossutilconfig
-  log "OSS credentials written to /root/.ossutilconfig"
+setup_storage_oss() {
+  local key_id="$1" key_secret="$2" endpoint="$3"
+  log "Configuring Alibaba Cloud OSS storage..."
+  "${SCRIPTS_DST}/setup-storage-oss.sh" "$key_id" "$key_secret" "$endpoint"
 }
 
 setup_geoip() {
@@ -356,9 +354,10 @@ setup_selfsigned_tls() {
 }
 
 write_app_conf() {
-  local geoip_path="${1:-}" oss_bucket="${2:-}" oss_endpoint="${3:-}"
-  local tls_cert="${4:-}" tls_key="${5:-}"
-  local client_add_disabled="${6:-true}" client_add_form_url="${7:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local geoip_path="${1:-}" storage_provider="${2:-local}" local_log_dir="${3:-$DEFAULT_LOCAL_LOG_DIR}"
+  local oss_bucket="${4:-}" oss_endpoint="${5:-}"
+  local tls_cert="${6:-}" tls_key="${7:-}"
+  local client_add_disabled="${8:-true}" client_add_form_url="${9:-$DEFAULT_CLIENT_ADD_FORM_URL}"
 
   local server_ip
   server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
@@ -380,6 +379,8 @@ OpenVpnManagementAddress   = "127.0.0.1:2080"
 OpenVpnManagementNetwork   = "tcp"
 GeoipDbPath                = ${geoip_path}
 OVClientsDir               = "/root"
+StorageProvider            = ${storage_provider}
+LocalLogDir                = ${local_log_dir}
 OSSLogBucket               = ${oss_bucket}
 OSSEndpoint                = ${oss_endpoint}
 ServerAddress              = ${server_ip}
@@ -400,7 +401,8 @@ APPCONF_TLS
 
 write_compose() {
   local admin_user="$1" admin_pass="$2"
-  local geoip_enabled="${3:-false}" oss_enabled="${4:-false}" domain="${5:-}"
+  local geoip_enabled="${3:-false}" storage_provider="${4:-local}" local_log_dir="${5:-$DEFAULT_LOCAL_LOG_DIR}"
+  local domain="${6:-}"
 
   {
     cat <<COMPOSE
@@ -424,7 +426,10 @@ services:
       - /etc/iptables:/etc/iptables
       - /etc/sysctl.d:/etc/sysctl.d
 COMPOSE
-    [[ "$oss_enabled"   == "true" ]] && echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro"
+    case "$storage_provider" in
+      local) echo "      - ${local_log_dir}:${local_log_dir}" ;;
+      oss)   echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro" ;;
+    esac
     [[ "$geoip_enabled" == "true" ]] && echo "      - /usr/share/GeoIP:/usr/share/GeoIP:ro"
     if [[ -n "$domain" ]]; then
       echo "      - /etc/letsencrypt/live/${domain}:/etc/letsencrypt/live/${domain}:ro"
@@ -514,16 +519,26 @@ print_next_steps() {
 # Core installer (shared by init and install)
 # -----------------------------------------------------------------------------
 run_install() {
-  local admin_user="$1"     admin_pass="$2"
-  local maxmind_id="$3"     maxmind_key="$4"
-  local oss_key_id="$5"     oss_key_secret="$6"
-  local oss_bucket="$7"     oss_endpoint="$8"
-  local domain="$9"         admin_email="${10}"
-  local install_docker="${11:-false}"
-  local client_add_disabled="${12:-true}"
-  local client_add_form_url="${13:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local admin_user="$1"        admin_pass="$2"
+  local maxmind_id="$3"        maxmind_key="$4"
+  local storage_provider="$5"  local_log_dir="$6"
+  local oss_key_id="$7"        oss_key_secret="$8"
+  local oss_bucket="$9"        oss_endpoint="${10}"
+  local domain="${11}"         admin_email="${12}"
+  local install_docker="${13:-false}"
+  local client_add_disabled="${14:-true}"
+  local client_add_form_url="${15:-$DEFAULT_CLIENT_ADD_FORM_URL}"
 
-  local geoip_path="" geoip_enabled="false" oss_enabled="false"
+  local geoip_path="" geoip_enabled="false"
+
+  case "$storage_provider" in
+    local|oss) ;;
+    *) err "Unknown --storage-provider '${storage_provider}'. Supported: local, oss." ;;
+  esac
+  if [[ "$storage_provider" == "oss" ]]; then
+    [[ -n "$oss_key_id" && -n "$oss_key_secret" && -n "$oss_bucket" ]] \
+      || err "--storage-provider=oss requires --oss-access-key-id, --oss-access-key-secret, and --oss-bucket."
+  fi
 
   check_openvpn
   check_scripts_src
@@ -542,13 +557,16 @@ run_install() {
   setup_client_template
   install_scripts
 
-  if [[ -n "$oss_key_id" && -n "$oss_key_secret" && -n "$oss_bucket" ]]; then
-    install_ossutil
-    write_ossconfig "$oss_key_id" "$oss_key_secret" "$oss_endpoint"
-    oss_enabled="true"
-  else
-    log "OSS not configured — audit log backup disabled."
-  fi
+  case "$storage_provider" in
+    local)
+      setup_storage_local "$local_log_dir"
+      # Clear OSS fields so the cron rotation script doesn't try to upload.
+      oss_bucket=""; oss_endpoint=""
+      ;;
+    oss)
+      setup_storage_oss "$oss_key_id" "$oss_key_secret" "$oss_endpoint"
+      ;;
+  esac
 
   if [[ -n "$maxmind_id" && -n "$maxmind_key" ]]; then
     setup_geoip "$maxmind_id" "$maxmind_key"
@@ -569,8 +587,11 @@ run_install() {
     tls_key="${UI_CONF_DIR}/selfsigned.key"
   fi
 
-  write_app_conf "$geoip_path" "$oss_bucket" "$oss_endpoint" "$tls_cert" "$tls_key" "$client_add_disabled" "$client_add_form_url"
-  write_compose "$admin_user" "$admin_pass" "$geoip_enabled" "$oss_enabled" "$domain"
+  write_app_conf "$geoip_path" "$storage_provider" "$local_log_dir" \
+    "$oss_bucket" "$oss_endpoint" "$tls_cert" "$tls_key" \
+    "$client_add_disabled" "$client_add_form_url"
+  write_compose "$admin_user" "$admin_pass" "$geoip_enabled" \
+    "$storage_provider" "$local_log_dir" "$domain"
   setup_cron
   setup_iptables_persistence
   apply_port_forwards
@@ -616,13 +637,25 @@ run_init() {
     maxmind_key=$(ask_value "MaxMind License Key" "" "true")
   fi
 
-  # Audit log backup (OSS) — optional
+  # Log archive storage backend
+  local storage_provider="local" local_log_dir="$DEFAULT_LOCAL_LOG_DIR"
   local oss_key_id="" oss_key_secret="" oss_bucket="" oss_endpoint="oss-me-central-1.aliyuncs.com"
   echo ""
-  echo "--- Audit Log Backup (optional) ---"
-  echo "Compresses and uploads OpenVPN session logs to Alibaba Cloud OSS."
-  echo "Enables the audit log browser at /logs/browse."
-  if ask_yn "Enable audit log backup?"; then
+  echo "--- Log Archive Storage ---"
+  echo "Where to store compressed OpenVPN session log archives (read by the audit log browser)."
+  echo "  local — write archives to a directory on this VM (no credentials required)"
+  echo "  oss   — upload archives to an Alibaba Cloud OSS bucket"
+  while true; do
+    storage_provider=$(ask_value "Storage backend (local/oss)" "local")
+    storage_provider="${storage_provider,,}"
+    case "$storage_provider" in
+      local|oss) break ;;
+      *) warn "Choose 'local' or 'oss'." ;;
+    esac
+  done
+  if [[ "$storage_provider" == "local" ]]; then
+    local_log_dir=$(ask_value "Local archive directory" "$DEFAULT_LOCAL_LOG_DIR")
+  else
     oss_key_id=$(ask_value "OSS Access Key ID")
     oss_key_secret=$(ask_value "OSS Access Key Secret" "" "true")
     oss_bucket=$(ask_value "OSS Bucket Name")
@@ -675,10 +708,11 @@ run_init() {
   echo ""
 
   run_install \
-    "$admin_user"    "$admin_pass" \
-    "$maxmind_id"    "$maxmind_key" \
-    "$oss_key_id"    "$oss_key_secret" "$oss_bucket" "$oss_endpoint" \
-    "$domain"        "$admin_email" \
+    "$admin_user"        "$admin_pass" \
+    "$maxmind_id"        "$maxmind_key" \
+    "$storage_provider"  "$local_log_dir" \
+    "$oss_key_id"        "$oss_key_secret" "$oss_bucket" "$oss_endpoint" \
+    "$domain"            "$admin_email" \
     "false" \
     "$client_add_disabled" "$client_add_form_url"
 }
@@ -703,6 +737,7 @@ esac
 # Non-interactive: parse flags
 ADMIN_USER="admin"; ADMIN_PASS=""
 MAXMIND_ID="";      MAXMIND_KEY=""
+STORAGE_PROVIDER=""; LOCAL_LOG_DIR="$DEFAULT_LOCAL_LOG_DIR"
 OSS_KEY_ID="";      OSS_KEY_SECRET=""; OSS_BUCKET=""; OSS_ENDPOINT="oss-me-central-1.aliyuncs.com"
 DOMAIN="";          ADMIN_EMAIL=""
 INSTALL_DOCKER="false"
@@ -714,6 +749,8 @@ while [[ $# -gt 0 ]]; do
     --admin-password)        ADMIN_PASS="$2";       shift 2 ;;
     --maxmind-account-id)    MAXMIND_ID="$2";       shift 2 ;;
     --maxmind-license-key)   MAXMIND_KEY="$2";      shift 2 ;;
+    --storage-provider)      STORAGE_PROVIDER="${2,,}"; shift 2 ;;
+    --local-log-dir)         LOCAL_LOG_DIR="$2";    shift 2 ;;
     --oss-access-key-id)     OSS_KEY_ID="$2";       shift 2 ;;
     --oss-access-key-secret) OSS_KEY_SECRET="$2";   shift 2 ;;
     --oss-bucket)            OSS_BUCKET="$2";       shift 2 ;;
@@ -734,10 +771,21 @@ done
   || err "--admin-password is required for non-interactive setup.
 For a guided setup, use: sudo $0 init"
 
+# Storage provider default: explicit flag wins; otherwise infer oss from OSS
+# flags so existing scripts/integrations keep working; otherwise default to local.
+if [[ -z "$STORAGE_PROVIDER" ]]; then
+  if [[ -n "$OSS_KEY_ID" || -n "$OSS_BUCKET" ]]; then
+    STORAGE_PROVIDER="oss"
+  else
+    STORAGE_PROVIDER="local"
+  fi
+fi
+
 run_install \
-  "$ADMIN_USER"    "$ADMIN_PASS" \
-  "$MAXMIND_ID"    "$MAXMIND_KEY" \
-  "$OSS_KEY_ID"    "$OSS_KEY_SECRET" "$OSS_BUCKET" "$OSS_ENDPOINT" \
-  "$DOMAIN"        "$ADMIN_EMAIL" \
+  "$ADMIN_USER"        "$ADMIN_PASS" \
+  "$MAXMIND_ID"        "$MAXMIND_KEY" \
+  "$STORAGE_PROVIDER"  "$LOCAL_LOG_DIR" \
+  "$OSS_KEY_ID"        "$OSS_KEY_SECRET" "$OSS_BUCKET" "$OSS_ENDPOINT" \
+  "$DOMAIN"            "$ADMIN_EMAIL" \
   "$INSTALL_DOCKER" \
   "$CLIENT_ADD_DISABLED" "$CLIENT_ADD_FORM_URL"

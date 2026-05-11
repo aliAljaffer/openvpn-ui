@@ -3,7 +3,6 @@ package controllers
 import (
 	"encoding/csv"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,9 +10,12 @@ import (
 	"github.com/beego/beego/v2/core/logs"
 	"github.com/beego/beego/v2/server/web"
 	"github.com/d3vilh/openvpn-ui/lib"
+	"github.com/d3vilh/openvpn-ui/lib/storage"
 )
 
-// ArchiveEntry pairs a raw OSS filename with a human-readable display label.
+const archivePrefix = "openvpn-logs-"
+
+// ArchiveEntry pairs a raw archive filename with a human-readable display label.
 type ArchiveEntry struct {
 	Filename string
 	Label    string
@@ -46,15 +48,15 @@ func (c *LogBrowserController) NestPrepare() {
 func (c *LogBrowserController) Get() {
 	c.TplName = "logbrowser.html"
 
-	bucket, _ := web.AppConfig.String("OSSLogBucket")
-	endpoint, _ := web.AppConfig.String("OSSEndpoint")
-
-	if bucket == "" {
-		c.Data["Error"] = "OSSLogBucket is not configured in app.conf."
+	store, err := storage.New()
+	if err != nil {
+		logs.Error("LogBrowser: storage init:", err)
+		c.Data["Error"] = err.Error()
 		return
 	}
 
-	archives, err := lib.ListOSSArchives(bucket, endpoint)
+	ctx := c.Ctx.Request.Context()
+	archives, err := store.List(ctx, archivePrefix)
 	if err != nil {
 		logs.Error("LogBrowser: list archives:", err)
 		c.Data["Error"] = err.Error()
@@ -75,13 +77,13 @@ func (c *LogBrowserController) Get() {
 		return
 	}
 
-	localPath, err := lib.DownloadOSSArchive(bucket, endpoint, selectedArchive, "/tmp")
+	localPath, cleanup, err := store.Download(ctx, selectedArchive, "/tmp")
 	if err != nil {
 		logs.Error("LogBrowser: download:", err)
 		c.Data["Error"] = err.Error()
 		return
 	}
-	defer os.Remove(localPath)
+	defer cleanup()
 
 	events, err := lib.ParseLogFile(localPath)
 	if err != nil {
@@ -137,23 +139,28 @@ func (c *LogBrowserController) Get() {
 }
 
 func (c *LogBrowserController) Export() {
-	bucket, _ := web.AppConfig.String("OSSLogBucket")
-	endpoint, _ := web.AppConfig.String("OSSEndpoint")
 	archive := c.GetString("archive")
 	filterCN := c.GetString("cn")
 
-	if bucket == "" || archive == "" {
-		c.Ctx.WriteString("Missing bucket configuration or archive parameter.")
+	if archive == "" {
+		c.Ctx.WriteString("Missing archive parameter.")
 		return
 	}
 
-	localPath, err := lib.DownloadOSSArchive(bucket, endpoint, archive, "/tmp")
+	store, err := storage.New()
+	if err != nil {
+		c.Ctx.WriteString("Storage init failed: " + err.Error())
+		return
+	}
+
+	ctx := c.Ctx.Request.Context()
+	localPath, cleanup, err := store.Download(ctx, archive, "/tmp")
 	if err != nil {
 		logs.Error("LogBrowser Export: download:", err)
 		c.Ctx.WriteString("Download failed: " + err.Error())
 		return
 	}
-	defer os.Remove(localPath)
+	defer cleanup()
 
 	events, err := lib.ParseLogFile(localPath)
 	if err != nil {
@@ -202,12 +209,12 @@ func (c *LogBrowserController) Export() {
 	w.Flush()
 }
 
-// makeArchiveEntries converts raw OSS filenames into display-friendly entries.
+// makeArchiveEntries converts raw archive filenames into display-friendly entries.
 // "openvpn-logs-2024-04-14-235959.log.gz" → label "2024-04-14 23:59:59"
 func makeArchiveEntries(filenames []string) []ArchiveEntry {
 	entries := make([]ArchiveEntry, 0, len(filenames))
 	for _, name := range filenames {
-		label := strings.TrimPrefix(name, "openvpn-logs-")
+		label := strings.TrimPrefix(name, archivePrefix)
 		label = strings.TrimSuffix(label, ".log.gz")
 		// "YYYY-MM-DD-HHmmss" is 17 chars; reformat to "YYYY-MM-DD HH:mm:ss"
 		if len(label) == 17 {

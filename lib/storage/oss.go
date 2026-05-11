@@ -1,7 +1,8 @@
-package lib
+package storage
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -10,6 +11,15 @@ import (
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
+
+type ossBackend struct {
+	bucket   string
+	endpoint string
+}
+
+func newOSS(bucket, endpoint string) *ossBackend {
+	return &ossBackend{bucket: bucket, endpoint: endpoint}
+}
 
 // loadOSSCredentials parses /root/.ossutilconfig (mounted into the container)
 // and returns the access key ID and secret.
@@ -39,30 +49,32 @@ func loadOSSCredentials() (akid, akSecret string, err error) {
 	return akid, akSecret, nil
 }
 
-func ossClient(endpoint string) (*oss.Client, error) {
+func (o *ossBackend) client() (*oss.Bucket, error) {
 	akid, akSecret, err := loadOSSCredentials()
 	if err != nil {
 		return nil, err
 	}
-	ep := endpoint
+	ep := o.endpoint
 	if !strings.HasPrefix(ep, "http") {
 		ep = "https://" + ep
 	}
-	return oss.New(ep, akid, akSecret)
-}
-
-// ListOSSArchives returns filenames of log archives stored in the OSS bucket,
-// sorted newest-first. Credentials are read from /root/.ossutilconfig.
-func ListOSSArchives(bucket, endpoint string) ([]string, error) {
-	client, err := ossClient(endpoint)
+	c, err := oss.New(ep, akid, akSecret)
 	if err != nil {
 		return nil, err
 	}
-	bkt, err := client.Bucket(bucket)
+	bkt, err := c.Bucket(o.bucket)
 	if err != nil {
 		return nil, fmt.Errorf("oss bucket: %w", err)
 	}
-	result, err := bkt.ListObjects(oss.Prefix("openvpn-logs-"), oss.MaxKeys(1000))
+	return bkt, nil
+}
+
+func (o *ossBackend) List(_ context.Context, prefix string) ([]string, error) {
+	bkt, err := o.client()
+	if err != nil {
+		return nil, err
+	}
+	result, err := bkt.ListObjects(oss.Prefix(prefix), oss.MaxKeys(1000))
 	if err != nil {
 		return nil, fmt.Errorf("oss list: %w", err)
 	}
@@ -77,20 +89,15 @@ func ListOSSArchives(bucket, endpoint string) ([]string, error) {
 	return files, nil
 }
 
-// DownloadOSSArchive fetches a named archive from OSS into localDir
-// and returns the full local path. Credentials are read from /root/.ossutilconfig.
-func DownloadOSSArchive(bucket, endpoint, filename, localDir string) (string, error) {
-	client, err := ossClient(endpoint)
+func (o *ossBackend) Download(_ context.Context, key, localDir string) (string, func(), error) {
+	bkt, err := o.client()
 	if err != nil {
-		return "", err
+		return "", func() {}, err
 	}
-	bkt, err := client.Bucket(bucket)
-	if err != nil {
-		return "", fmt.Errorf("oss bucket: %w", err)
+	dest := localDir + "/" + key
+	if err := bkt.GetObjectToFile(key, dest); err != nil {
+		return "", func() {}, fmt.Errorf("oss download %s: %w", key, err)
 	}
-	dest := localDir + "/" + filename
-	if err := bkt.GetObjectToFile(filename, dest); err != nil {
-		return "", fmt.Errorf("oss download %s: %w", filename, err)
-	}
-	return dest, nil
+	cleanup := func() { _ = os.Remove(dest) }
+	return dest, cleanup, nil
 }

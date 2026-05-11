@@ -1,7 +1,7 @@
 # openvpn-ui
 
 A web interface for managing an OpenVPN server, with added support for
-Alibaba Cloud OSS log archiving, an audit log browser, GeoIP enrichment,
+pluggable log archive storage, an audit log browser, GeoIP enrichment,
 and an improved map view.
 
 This is a fork of [d3vilh/openvpn-ui](https://github.com/d3vilh/openvpn-ui).
@@ -13,16 +13,27 @@ extends it with production-oriented features specific to our deployment.
 ## What is added in this fork
 
 **Audit log browser** (`/logs/browse`)
-- Reads archived OpenVPN session logs from an Alibaba Cloud OSS bucket
+- Reads archived OpenVPN session logs from the configured storage backend
 - Filters by date and by user CN
 - Shows connect time, disconnect time, session duration, and source location
 - Exports filtered results as CSV
 
 **Automatic log archiving**
 - A host cron job collects OpenVPN journal lines into a rolling master log
-- A second job compresses and uploads the master log to OSS daily at 23:59 UTC,
-  or earlier if the log exceeds 10 MB
+- A second job compresses the master log and stores the archive in the
+  configured backend daily at 23:59 UTC, or earlier if the log exceeds 10 MB
 - Archives are named `openvpn-logs-YYYY-MM-DD-HHmmss.log.gz`
+
+**Pluggable archive storage**
+- `local` (default) — stores `.log.gz` archives on the VM filesystem.
+  Zero credentials, works out of the box. Default path is
+  `/var/log/openvpn-ui/archives` (override with `--local-log-dir`).
+  Disk usage is negligible in practice — ~14 kB/day in real-world use.
+- `oss` — uploads archives to an Alibaba Cloud OSS bucket. Requires a RAM
+  user (see permissions below).
+- Backend is selected via `--storage-provider local|oss` in `setup.sh`,
+  or by editing `StorageProvider` in `app.conf` and restarting the container.
+  The audit log browser and the rotation script both honor this setting.
 
 **GeoIP enrichment**
 - Audit log sessions show city and country resolved from the client source IP
@@ -63,7 +74,8 @@ extends it with production-oriented features specific to our deployment.
 
 **Optional, for extra features:**
 - A free [MaxMind account](https://www.maxmind.com) — enables the map view
-- An Alibaba Cloud OSS bucket with a RAM user — enables audit log backup
+- An Alibaba Cloud OSS bucket with a RAM user — only if you want cloud-backed
+  log archive storage; otherwise the local backend is used and needs nothing
 - A domain name pointed at the VM — enables HTTPS
 
 ---
@@ -125,15 +137,17 @@ This is an interactive guided setup. It will ask you:
 
 1. **Admin username and password** — for logging into the web UI
 2. **Map view** — whether to enable it (requires a MaxMind account)
-3. **Audit log backup** — whether to enable it (requires an OSS bucket)
+3. **Log archive storage backend** — `local` (default, no credentials) or `oss`
+   (Alibaba Cloud OSS bucket). Both feed the same audit log browser.
 4. **Client creation** — whether direct creation is enabled in the UI, or
    whether the Create button is replaced by a link to an external request form
 5. **Port forwarding** — optional TCP port-forward rules from the VPN VM to
    internal `<ip>:<port>` destinations
 6. **HTTPS** — whether to enable it (requires a domain name pointed at the VM)
 
-Everything is optional except the password. If you skip map view or audit
-logs, those features are simply disabled — nothing else is affected.
+Everything is optional except the password. If you skip the map view those
+features are simply disabled — nothing else is affected. The log archive
+backend always has a working default (`local`).
 
 > **If you enable HTTPS:** `setup.sh` uses Let's Encrypt to issue the certificate.
 > Let's Encrypt validates domain ownership by making an HTTP request to your VM
@@ -237,14 +251,21 @@ OpenVpnManagementAddress   = "127.0.0.1:2080"
 OpenVpnManagementNetwork   = "tcp"
 GeoipDbPath                = /usr/share/GeoIP/GeoLite2-City.mmdb
 OVClientsDir               = "/root"
-OSSLogBucket               = your-bucket-name
+StorageProvider            = local
+LocalLogDir                = /var/log/openvpn-ui/archives
+OSSLogBucket               =
 OSSEndpoint                = oss-me-central-1.aliyuncs.com
 ```
 
 Key settings:
 
 - `GeoipDbPath` — leave empty to disable the map view and geo lookup in audit logs
-- `OSSLogBucket` — leave empty to disable audit log backup and the log browser
+- `StorageProvider` — `local` or `oss`. Selects where rotated `.log.gz` archives
+  are written and where the audit log browser reads from. If unset and
+  `OSSLogBucket` is non-empty, defaults to `oss` for backwards compatibility;
+  otherwise defaults to `local`.
+- `LocalLogDir` — archive directory used by the `local` backend
+- `OSSLogBucket` — bucket name used by the `oss` backend (ignored for `local`)
 - `OpenVpnManagementAddress` — must match the `management` line in `server.conf`
 
 Optional TLS settings (added by `setup.sh` when a domain is configured):
@@ -278,12 +299,14 @@ services:
       - /opt/openvpn-ui/conf:/opt/openvpn-ui/conf
       - /opt/scripts:/opt/scripts
       - /root:/root
-      - /root/.ossutilconfig:/root/.ossutilconfig:ro   # if OSS enabled
-      - /usr/share/GeoIP:/usr/share/GeoIP:ro           # if map view enabled
+      # Storage backend (one of):
+      - /var/log/openvpn-ui/archives:/var/log/openvpn-ui/archives   # StorageProvider=local
+      - /root/.ossutilconfig:/root/.ossutilconfig:ro                # StorageProvider=oss
+      - /usr/share/GeoIP:/usr/share/GeoIP:ro                        # if map view enabled
     restart: always
 ```
 
-### OSS RAM user permissions
+### OSS RAM user permissions (only when `StorageProvider=oss`)
 
 The RAM user supplied to `setup.sh` needs the following policy attached,
 scoped to your bucket. Create it in the Alibaba Cloud console under
@@ -446,13 +469,12 @@ run privileged.
 
 ## Future plans
 
-**Pluggable log storage (local, OSS, S3, GCS)**
+**More log storage backends (S3, GCS)**
 
-Log archiving and the audit log browser currently require Alibaba Cloud OSS.
-The plan is to make the storage backend pluggable: local VM filesystem (the new
-default — no credentials required), Alibaba Cloud OSS, AWS S3, and GCP Cloud
-Storage. The archive format and browser experience will be identical regardless
-of where the logs live.
+Local filesystem and Alibaba Cloud OSS are supported today. The plan is to
+extend the storage backend interface to AWS S3 and GCP Cloud Storage so the
+same audit log browser works against any of the four. The archive format and
+browser experience stay identical regardless of where the logs live.
 
 ---
 
