@@ -49,6 +49,12 @@ extends it with production-oriented features specific to our deployment.
   alongside currently connected clients
 - Clicking a faded marker shows the CN, location, disconnect time, and duration
 
+**Monitoring API** (`/api/v1/metrics/`)
+- Read-only JSON + Prometheus exposition for centralized monitoring
+- Endpoints: `summary`, `clients`, `disconnects`, `portforwards`, `certificates`, `prometheus`
+- Token-gated (`Authorization: Bearer …`); default-deny returns 404 when no token is set
+- See [Monitoring API](#monitoring-api) below
+
 **TCP port forwarding** (`host/scripts/port-forward.sh` + web UI at `/portforward`)
 - Forwards TCP traffic on a chosen listen port of the VPN VM to an internal
   `<ip>:<port>`, useful when VPN clients need access to an intranet service
@@ -266,6 +272,10 @@ S3Region                   =
 GCSLogBucket               =
 GCSProjectID               =
 GCSServiceAccountKeyFile   =
+MetricsAuthToken           =
+MetricsCacheSeconds        = 5
+DisconnectsWindowH         = 24
+MetricsHashClientNames     = false
 ```
 
 Key settings:
@@ -285,6 +295,16 @@ Key settings:
   `GCSProjectID` is informational (the Go SDK derives the project from the
   service-account JSON).
 - `OpenVpnManagementAddress` — must match the `management` line in `server.conf`
+- `MetricsAuthToken` — empty disables the monitoring API (default-deny: the
+  whole `/api/v1/metrics/` namespace returns 404). Set to a 64-character hex
+  string to enable; clients then authenticate with `Authorization: Bearer …`.
+  Use `setup.sh --generate-metrics-token` to mint one.
+- `MetricsCacheSeconds` — in-process cache window for `/summary` and `/clients`
+  (the only endpoints that hit the OpenVPN management socket). 0 disables.
+- `DisconnectsWindowH` — default lookback for `/disconnects` (overridable per
+  request with `?window=Nh`).
+- `MetricsHashClientNames` — when `true`, CNs in metrics responses (including
+  Prometheus labels) are replaced with an 8-byte SHA-256 prefix.
 
 Optional TLS settings (added by `setup.sh` when a domain is configured):
 
@@ -563,30 +583,64 @@ run privileged.
 
 ---
 
+## Monitoring API
+
+A read-only HTTP API on the openvpn-ui app that publishes live VPN telemetry
+for a centralized monitoring system. Same `:8443` HTTPS listener as the UI,
+under `/api/v1/metrics/`.
+
+**Default-deny.** With `MetricsAuthToken = ""` in `app.conf` the whole
+namespace returns `404 Not Found` so the surface is invisible until you opt in.
+Once a token is configured, requests must present
+`Authorization: Bearer <token>`. The session cookie that authenticates the UI
+does **not** grant access to this namespace.
+
+Enable it during install:
+
+```bash
+# Auto-generate a token (printed in the post-install summary):
+sudo ./host/setup.sh install ... --generate-metrics-token
+
+# Or supply your own:
+sudo ./host/setup.sh install ... --metrics-token "$(openssl rand -hex 32)"
+```
+
+### Endpoints
+
+| Endpoint                            | Returns                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /api/v1/metrics/summary`       | Scalar counts: `n_connected`, `n_recent_disconnects`, `n_port_forwards`, cert counts |
+| `GET /api/v1/metrics/clients`       | Connected clients with CN, real IP (geo-enriched if MaxMind set), virtual IP, bytes, connected_since |
+| `GET /api/v1/metrics/disconnects`   | Sessions disconnected within `?window=Nh` (default `DisconnectsWindowH`)             |
+| `GET /api/v1/metrics/portforwards`  | Current NAT rules — proxied from `port-forward.sh list --format json`                |
+| `GET /api/v1/metrics/certificates`  | `{active, revoked, expiring_30d, expired, by_cn: [...]}`                             |
+| `GET /api/v1/metrics/prometheus`    | Same data as Prometheus text exposition (`text/plain; version=0.0.4`)                |
+
+JSON endpoints wrap their payload as `{"generated_at": "<RFC3339>", "data": …}`
+so consumers can detect cache staleness.
+
+### Scrape example (Prometheus)
+
+```yaml
+scrape_configs:
+  - job_name: openvpn
+    scheme: https
+    metrics_path: /api/v1/metrics/prometheus
+    authorization:
+      type: Bearer
+      credentials: <token from setup.sh output>
+    static_configs:
+      - targets: ["vpn.example.com:8443"]
+```
+
+Recommend pairing with cloud security-group / firewall rules so only your
+central monitor's IP can reach `:8443`. See `MetricsAuthToken`,
+`MetricsCacheSeconds`, `DisconnectsWindowH`, and `MetricsHashClientNames`
+in the [`conf/app.conf`](#confappconf) reference for tuning knobs.
+
+---
+
 ## Future plans
-
-**Multi-cloud provisioning (AWS EC2 and GCP Compute Engine)**
-
-The bootstrap scripts currently target Alibaba Cloud ECS only. The plan is to add
-AWS EC2 and GCP Compute Engine as provisioning targets behind a `--provider` flag.
-Each provider gets its own script (`bootstrap-aws.sh`, `bootstrap-gcp.sh`) with the
-same idempotent, named-resource approach. Minimal IAM / IAM role definitions will
-be provided for each so you know exactly what permissions to grant before running.
-The VM-side setup (`host/setup.sh`) and the local build-and-deploy flow (`host/deploy.sh`)
-are already cloud-agnostic and will work unchanged across all three providers.
-
----
-
-**Centralized monitoring API**
-
-A read-only HTTP API on the openvpn-ui app that exposes live VPN telemetry —
-connected clients, recent disconnects, current port-forward rules, certificate
-inventory — for consumption by an internal central dashboard that aggregates
-across multiple VPN VMs. JSON over the existing HTTPS listener, gated by a
-single bearer token. Default-deny: until a token is configured the API
-returns 404, so the surface is invisible until you opt in.
-
----
 
 **Cloud provider startup script (user-data) support**
 

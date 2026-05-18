@@ -116,6 +116,10 @@ Flags for 'install':
   --client-add-enabled            Re-enable direct client creation in the UI
   --port-forward <lp:ip:dp>       Forward TCP <lp> on this VM to <ip>:<dp>. Repeatable.
                                   Example: --port-forward 8443:10.0.1.5:443
+  --metrics-token <hex>           Enable the monitoring API at /api/v1/metrics/
+                                  with this bearer token. Omit to keep the API disabled.
+  --generate-metrics-token        Generate a random 64-char hex token and enable the API.
+                                  The token is printed in the post-install summary.
 EOF
   exit 1
 }
@@ -141,7 +145,7 @@ _setup_openvpn_ui() {
     --oss-access-key-id|--oss-access-key-secret|--oss-bucket|--oss-endpoint| \\
     --s3-access-key-id|--s3-secret-access-key|--s3-bucket|--s3-region| \\
     --gcs-bucket|--gcs-project-id|--gcs-key-file| \\
-    --domain|--admin-email|--client-add-form-url|--port-forward)
+    --domain|--admin-email|--client-add-form-url|--port-forward|--metrics-token)
       return 0 ;;
   esac
 
@@ -166,6 +170,7 @@ _setup_openvpn_ui() {
         --oss-access-key-id --oss-access-key-secret --oss-bucket --oss-endpoint
         --s3-access-key-id --s3-secret-access-key --s3-bucket --s3-region
         --gcs-bucket --gcs-project-id --gcs-key-file
+        --metrics-token --generate-metrics-token
         --domain --admin-email
         --client-add-form-url --client-add-enabled
         --port-forward
@@ -391,6 +396,7 @@ write_app_conf() {
   local gcs_bucket="${8:-}" gcs_project="${9:-}" gcs_key_path="${10:-}"
   local tls_cert="${11:-}" tls_key="${12:-}"
   local client_add_disabled="${13:-true}" client_add_form_url="${14:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local metrics_token="${15:-}"
 
   local server_ip
   server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
@@ -424,6 +430,10 @@ GCSServiceAccountKeyFile   = ${gcs_key_path}
 ServerAddress              = ${server_ip}
 ClientAddDisabled          = ${client_add_disabled}
 ClientAddFormURL           = ${client_add_form_url}
+MetricsAuthToken           = ${metrics_token}
+MetricsCacheSeconds        = 5
+DisconnectsWindowH         = 24
+MetricsHashClientNames     = false
 APPCONF
 
   if [[ -n "$tls_cert" && -n "$tls_key" ]]; then
@@ -540,6 +550,7 @@ LOGCRON
 }
 
 print_next_steps() {
+  local metrics_token="${1:-}"
   local server_ip
   server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
     || hostname -I | awk '{print $1}')
@@ -548,6 +559,14 @@ print_next_steps() {
   echo "============================================================"
   echo "  VM setup complete."
   echo "============================================================"
+  if [[ -n "$metrics_token" ]]; then
+    echo ""
+    echo "  Metrics API token (paste into your central monitor):"
+    echo "    METRICS_TOKEN=${metrics_token}"
+    echo "  Endpoints: GET https://${server_ip}:${UI_HTTPS_PORT}/api/v1/metrics/{summary,clients,disconnects,portforwards,certificates}"
+    echo "  Authorization: Bearer ${metrics_token}"
+    echo "============================================================"
+  fi
   echo ""
   echo "  The Docker image must be built on your local machine"
   echo "  (the VM does not have enough RAM to build it)."
@@ -579,6 +598,7 @@ run_install() {
   local install_docker="${20:-false}"
   local client_add_disabled="${21:-true}"
   local client_add_form_url="${22:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local metrics_token="${23:-}"
 
   local geoip_path="" geoip_enabled="false"
   local gcs_key_dest="$DEFAULT_GCS_KEY_DEST"
@@ -668,13 +688,14 @@ run_install() {
     "$s3_bucket" "$s3_region" \
     "$gcs_bucket" "$gcs_project" "$gcs_key_dest" \
     "$tls_cert" "$tls_key" \
-    "$client_add_disabled" "$client_add_form_url"
+    "$client_add_disabled" "$client_add_form_url" \
+    "$metrics_token"
   write_compose "$admin_user" "$admin_pass" "$geoip_enabled" \
     "$storage_provider" "$local_log_dir" "$domain" "$gcs_key_dest"
   setup_cron
   setup_iptables_persistence
   apply_port_forwards
-  print_next_steps
+  print_next_steps "$metrics_token"
 }
 
 # -----------------------------------------------------------------------------
@@ -792,6 +813,17 @@ run_init() {
     done
   fi
 
+  # Metrics API token — optional
+  local metrics_token=""
+  echo ""
+  echo "--- Monitoring API (optional) ---"
+  echo "A read-only JSON API at /api/v1/metrics/ for a central monitoring system."
+  echo "If disabled, the namespace returns 404 (default-deny)."
+  if ask_yn "Enable the monitoring API?"; then
+    metrics_token="$(openssl rand -hex 32)"
+    log "Generated metrics token (saved to app.conf): ${metrics_token}"
+  fi
+
   # HTTPS / TLS — always on; optionally use Let's Encrypt
   local domain="" admin_email=""
   echo ""
@@ -817,7 +849,8 @@ run_init() {
     "$gcs_bucket"        "$gcs_project"    "$gcs_src_key" \
     "$domain"            "$admin_email" \
     "false" \
-    "$client_add_disabled" "$client_add_form_url"
+    "$client_add_disabled" "$client_add_form_url" \
+    "$metrics_token"
 }
 
 # -----------------------------------------------------------------------------
@@ -847,6 +880,7 @@ GCS_BUCKET="";      GCS_PROJECT="";    GCS_KEY_FILE=""
 DOMAIN="";          ADMIN_EMAIL=""
 INSTALL_DOCKER="false"
 CLIENT_ADD_DISABLED="true"; CLIENT_ADD_FORM_URL="$DEFAULT_CLIENT_ADD_FORM_URL"
+METRICS_TOKEN=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -872,6 +906,8 @@ while [[ $# -gt 0 ]]; do
     --install-docker)        INSTALL_DOCKER="true";                shift   ;;
     --client-add-form-url)   CLIENT_ADD_FORM_URL="$2";            shift 2 ;;
     --client-add-enabled)    CLIENT_ADD_DISABLED="false"; CLIENT_ADD_FORM_URL=""; shift ;;
+    --metrics-token)         METRICS_TOKEN="$2";                  shift 2 ;;
+    --generate-metrics-token) METRICS_TOKEN="$(openssl rand -hex 32)"; shift ;;
     --port-forward)
       [[ -n "${2:-}" ]] || err "--port-forward requires <listen-port>:<dest-ip>:<dest-port>"
       PORT_FORWARDS+=("$2"); shift 2 ;;
@@ -902,4 +938,5 @@ run_install \
   "$GCS_BUCKET"        "$GCS_PROJECT"    "$GCS_KEY_FILE" \
   "$DOMAIN"            "$ADMIN_EMAIL" \
   "$INSTALL_DOCKER" \
-  "$CLIENT_ADD_DISABLED" "$CLIENT_ADD_FORM_URL"
+  "$CLIENT_ADD_DISABLED" "$CLIENT_ADD_FORM_URL" \
+  "$METRICS_TOKEN"

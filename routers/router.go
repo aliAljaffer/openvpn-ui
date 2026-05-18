@@ -54,6 +54,11 @@ func Init(configDir string) {
 				&controllers.APISignalController{},
 			),
 		),
+		web.NSNamespace("/metrics",
+			web.NSInclude(
+				&controllers.APIMetricsController{},
+			),
+		),
 	)
 	web.AddNamespace(ns)
 }
