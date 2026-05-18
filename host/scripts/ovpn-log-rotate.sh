@@ -71,7 +71,7 @@ rotate() {
   echo "Rotated: openvpn-logs-${timestamp}.log.gz (provider=${STORAGE_PROVIDER})"
 }
 
-CURRENT_SIZE=$(stat -c%s "$MASTER_LOG" 2>/dev/null || echo 0)
+CURRENT_SIZE=$(wc -c < "$MASTER_LOG" 2>/dev/null || echo 0)
 if [[ "$CURRENT_SIZE" -ge "$MAX_BYTES" ]]; then
   rotate
 fi

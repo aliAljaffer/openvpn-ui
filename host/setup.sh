@@ -423,12 +423,16 @@ services:
       - /opt/openvpn-ui/conf:/opt/openvpn-ui/conf
       - /opt/scripts:/opt/scripts
       - /root:/root
+      - /var/log/openvpn:/var/log/openvpn
       - /etc/iptables:/etc/iptables
       - /etc/sysctl.d:/etc/sysctl.d
 COMPOSE
     case "$storage_provider" in
       local) echo "      - ${local_log_dir}:${local_log_dir}" ;;
-      oss)   echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro" ;;
+      oss)
+        echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro"
+        echo "      - /usr/bin/ossutil:/usr/bin/ossutil:ro"
+        ;;
     esac
     [[ "$geoip_enabled" == "true" ]] && echo "      - /usr/share/GeoIP:/usr/share/GeoIP:ro"
     if [[ -n "$domain" ]]; then

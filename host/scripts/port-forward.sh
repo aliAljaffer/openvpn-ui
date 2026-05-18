@@ -32,6 +32,9 @@ err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 IS_ALPINE=0
 [[ -f /etc/alpine-release ]] && IS_ALPINE=1
 
+IPT="iptables"
+IPTSAVE="iptables-save"
+
 valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_ipv4() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 
@@ -57,13 +60,22 @@ ensure_iptables_persistent() {
 persist_rules() {
   if (( IS_ALPINE )); then
     mkdir -p /etc/iptables
-    iptables-save > /etc/iptables/rules.v4
+    $IPTSAVE > /etc/iptables/rules.v4
   else
-    persist_rules
+    netfilter-persistent save >/dev/null 2>&1
   fi
 }
 
 ensure_ip_forward() {
+  if (( IS_ALPINE )); then
+    # Inside the container: the host already has ip_forward=1 (set by setup.sh).
+    # network_mode:host shares the host network stack, so the value is visible
+    # but sysctl -w is blocked by the read-only /proc in the container.
+    local fwd
+    fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)
+    [[ "$fwd" == "1" ]] || err "net.ipv4.ip_forward is not enabled on the host. Run setup.sh first."
+    return
+  fi
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
   if [[ ! -f "$SYSCTL_FILE" ]]; then
     echo "net.ipv4.ip_forward=1" > "$SYSCTL_FILE"
@@ -76,8 +88,8 @@ ensure_ip_forward() {
 # listen port exists, or empty string otherwise.
 existing_dest_for_port() {
   local listen_port="$1"
-  iptables -t nat -S PREROUTING 2>/dev/null \
-    | sed -nE "s/^-A PREROUTING -p tcp -m tcp --dport ${listen_port} -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/\1 \2/p" \
+  $IPT -t nat -S PREROUTING 2>/dev/null \
+    | sed -nE "s/^-A PREROUTING -p tcp (-m tcp )?--dport ${listen_port} -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/\2 \3/p" \
     | head -1
 }
 
@@ -104,13 +116,13 @@ cmd_add() {
   fi
 
   log "Adding NAT rule: tcp/${listen_port} -> ${dest_ip}:${dest_port}"
-  iptables -t nat -A PREROUTING \
+  $IPT -t nat -A PREROUTING \
     -p tcp --dport "${listen_port}" \
     -j DNAT --to-destination "${dest_ip}:${dest_port}"
 
-  if ! iptables -t nat -C POSTROUTING \
+  if ! $IPT -t nat -C POSTROUTING \
         -p tcp -d "${dest_ip}" --dport "${dest_port}" -j MASQUERADE 2>/dev/null; then
-    iptables -t nat -A POSTROUTING \
+    $IPT -t nat -A POSTROUTING \
       -p tcp -d "${dest_ip}" --dport "${dest_port}" -j MASQUERADE
   fi
 
@@ -138,8 +150,8 @@ cmd_list() {
   echo ""
   echo "Configured port-forward rules (PREROUTING DNAT):"
   local lines
-  lines=$(iptables -t nat -S PREROUTING 2>/dev/null \
-    | sed -nE 's/^-A PREROUTING -p tcp -m tcp --dport ([0-9]+) -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/  tcp\/\1 -> \2:\3/p')
+  lines=$($IPT -t nat -S PREROUTING 2>/dev/null \
+    | sed -nE 's/^-A PREROUTING -p tcp (-m tcp )?--dport ([0-9]+) -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/  tcp\/\2 -> \3:\4/p')
   if [[ -z "$lines" ]]; then
     echo "  (none)"
   else
@@ -147,7 +159,7 @@ cmd_list() {
   fi
   echo ""
   echo "Raw NAT table:"
-  iptables -t nat -L -n --line-numbers
+  $IPT -t nat -L -n --line-numbers
 }
 
 # Emit configured rules as compact JSON for programmatic consumers (e.g., the UI).
@@ -157,8 +169,8 @@ cmd_list_json() {
   fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)
 
   local rules_csv
-  rules_csv=$(iptables -t nat -S PREROUTING 2>/dev/null \
-    | sed -nE 's/^-A PREROUTING -p tcp -m tcp --dport ([0-9]+) -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/\1,\2,\3/p')
+  rules_csv=$($IPT -t nat -S PREROUTING 2>/dev/null \
+    | sed -nE 's/^-A PREROUTING -p tcp (-m tcp )?--dport ([0-9]+) -j DNAT --to-destination ([0-9.]+):([0-9]+).*$/\2,\3,\4/p')
 
   printf '{"ip_forward":%s,"rules":[' "$fwd"
   local first=1 lp ip dp
@@ -186,17 +198,17 @@ cmd_remove() {
   read -r dest_ip dest_port <<< "$existing"
 
   log "Removing NAT rule: tcp/${listen_port} -> ${dest_ip}:${dest_port}"
-  iptables -t nat -D PREROUTING \
+  $IPT -t nat -D PREROUTING \
     -p tcp --dport "${listen_port}" \
     -j DNAT --to-destination "${dest_ip}:${dest_port}"
 
   # Drop the matching POSTROUTING MASQUERADE only if no other rule still
   # forwards to the same dest, so unrelated rules keep working.
   local still_used
-  still_used=$(iptables -t nat -S PREROUTING 2>/dev/null \
+  still_used=$($IPT -t nat -S PREROUTING 2>/dev/null \
     | grep -cE -- "-j DNAT --to-destination ${dest_ip}:${dest_port}\$" || true)
   if [[ "${still_used:-0}" -eq 0 ]]; then
-    iptables -t nat -D POSTROUTING \
+    $IPT -t nat -D POSTROUTING \
       -p tcp -d "${dest_ip}" --dport "${dest_port}" -j MASQUERADE 2>/dev/null || true
   fi
 
