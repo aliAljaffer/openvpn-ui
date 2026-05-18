@@ -15,13 +15,13 @@
 
 set -euo pipefail
 
-[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 1; }
-[[ $# -eq 2 ]] || { echo "Usage: $0 <src-key.json> <dest-key-path>" >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 90; }
+[[ $# -eq 2 ]] || { echo "Usage: $0 <src-key.json> <dest-key-path>" >&2; exit 91; }
 
 SRC_KEY="$1"
 DEST_KEY="$2"
 
-[[ -f "$SRC_KEY" ]] || { echo "Service account key not found: ${SRC_KEY}" >&2; exit 1; }
+[[ -f "$SRC_KEY" ]] || { echo "Service account key not found: ${SRC_KEY}" >&2; exit 92; }
 
 if ! command -v gcloud &>/dev/null; then
   echo "[INFO] Installing Google Cloud SDK..."

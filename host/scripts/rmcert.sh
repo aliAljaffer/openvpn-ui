@@ -17,15 +17,15 @@ OPENVPN_DIR="/etc/openvpn"
 OVPN_FILE_PATH="${OPENVPN_DIR}/clients/${CERT_NAME}.ovpn"
 INDEX="${EASY_RSA}/pki/index.txt"
 
-[[ -n "$CERT_NAME" ]]   || { echo "Usage: rmcert.sh <name> <serial>" >&2; exit 1; }
-[[ -n "$CERT_SERIAL" ]] || { echo "Usage: rmcert.sh <name> <serial>" >&2; exit 1; }
+[[ -n "$CERT_NAME" ]]   || { echo "Usage: rmcert.sh <name> <serial>" >&2; exit 87; }
+[[ -n "$CERT_SERIAL" ]] || { echo "Usage: rmcert.sh <name> <serial>" >&2; exit 88; }
 
 STATUS_CH=$(grep -e "${CERT_NAME}$" -e "${CERT_NAME}/" "${INDEX}" \
   | awk '{print $1}' | tr -d '\n')
 
 if [[ "$STATUS_CH" == "V" ]]; then
   echo "Certificate is still VALID — revoke it before removing." >&2
-  exit 1
+  exit 89
 fi
 
 if [[ $(grep -c "/CN=${CERT_NAME}/" "${INDEX}") -eq 2 ]]; then

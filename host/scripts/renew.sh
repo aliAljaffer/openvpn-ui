@@ -13,7 +13,7 @@ TFA_NAME="${TFA_NAME:-none}"
 
 EASY_RSA="/usr/share/easy-rsa"
 
-[[ -n "$CERT_NAME" ]] || { echo "Usage: renew.sh <name> [<static-ip>] [<serial>]" >&2; exit 1; }
+[[ -n "$CERT_NAME" ]] || { echo "Usage: renew.sh <name> [<static-ip>] [<serial>]" >&2; exit 78; }
 
 export EASYRSA_BATCH=1
 cd "${EASY_RSA}"

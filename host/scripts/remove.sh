@@ -35,5 +35,5 @@ case "$ACTION" in
     echo "All removed." ;;
   *)
     echo "Usage: remove.sh <remove_pki|remove_ovpn|remove_static_clients|remove_ovpn_db|remove_all>" >&2
-    exit 1 ;;
+    exit 75 ;;
 esac

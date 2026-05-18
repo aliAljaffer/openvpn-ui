@@ -109,10 +109,10 @@ rotate() {
     *)
       rm -f "$archive"
       echo "Unknown StorageProvider '${STORAGE_PROVIDER}' — master log NOT truncated." >&2
-      exit 1
+      exit 56
       ;;
   esac \
-    || { echo "Archive store failed — master log NOT truncated." >&2; exit 1; }
+    || { echo "Archive store failed — master log NOT truncated." >&2; exit 57; }
 
   : > "$MASTER_LOG"
   echo "Rotated: openvpn-logs-${timestamp}.log.gz (provider=${STORAGE_PROVIDER})"

@@ -18,8 +18,8 @@ OPENVPN_DIR="/etc/openvpn"
 INDEX="${EASY_RSA}/pki/index.txt"
 OVPN_FILE_PATH="${OPENVPN_DIR}/clients/${CERT_NAME}.ovpn"
 
-[[ -n "$CERT_NAME" ]]   || { echo "Usage: revoke.sh <name> <serial>" >&2; exit 1; }
-[[ -n "$CERT_SERIAL" ]] || { echo "Usage: revoke.sh <name> <serial>" >&2; exit 1; }
+[[ -n "$CERT_NAME" ]]   || { echo "Usage: revoke.sh <name> <serial>" >&2; exit 84; }
+[[ -n "$CERT_SERIAL" ]] || { echo "Usage: revoke.sh <name> <serial>" >&2; exit 85; }
 
 export EASYRSA_BATCH=1
 

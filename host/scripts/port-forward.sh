@@ -20,9 +20,14 @@ SYSCTL_FILE="/etc/sysctl.d/99-openvpn-forward.conf"
 GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; RESET='\033[0m'
 log()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+err()  {
+  local code=1
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && { code="$1"; shift; }
+  echo -e "${RED}[ERROR]${RESET} $*" >&2
+  exit "$code"
+}
 
-[[ "$(id -u)" -eq 0 ]] || err "port-forward.sh must be run as root."
+[[ "$(id -u)" -eq 0 ]] || err 60 "port-forward.sh must be run as root."
 
 # Alpine detection — the openvpn-ui container is Alpine and mutates host iptables
 # via NET_ADMIN + network_mode:host. Persistence (writing /etc/iptables/rules.v4)
@@ -73,7 +78,7 @@ ensure_ip_forward() {
     # but sysctl -w is blocked by the read-only /proc in the container.
     local fwd
     fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)
-    [[ "$fwd" == "1" ]] || err "net.ipv4.ip_forward is not enabled on the host. Run setup.sh first."
+    [[ "$fwd" == "1" ]] || err 61 "net.ipv4.ip_forward is not enabled on the host. Run setup.sh first."
     return
   fi
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
@@ -96,9 +101,9 @@ existing_dest_for_port() {
 cmd_add() {
   local listen_port="$1" dest_ip="$2" dest_port="$3"
 
-  valid_port "$listen_port" || err "listen-port must be 1-65535: '${listen_port}'"
-  valid_ipv4 "$dest_ip"     || err "dest-ip must be a dotted IPv4 address: '${dest_ip}'"
-  valid_port "$dest_port"   || err "dest-port must be 1-65535: '${dest_port}'"
+  valid_port "$listen_port" || err 62 "listen-port must be 1-65535: '${listen_port}'"
+  valid_ipv4 "$dest_ip"     || err 63 "dest-ip must be a dotted IPv4 address: '${dest_ip}'"
+  valid_port "$dest_port"   || err 64 "dest-port must be 1-65535: '${dest_port}'"
 
   ensure_iptables_persistent
   ensure_ip_forward
@@ -112,7 +117,7 @@ cmd_add() {
       log "Rule already present: tcp/${listen_port} -> ${dest_ip}:${dest_port} — skipping."
       return 0
     fi
-    err "tcp/${listen_port} already forwards to ${cur_ip}:${cur_port}. Remove it first: $0 remove ${listen_port}"
+    err 65 "tcp/${listen_port} already forwards to ${cur_ip}:${cur_port}. Remove it first: $0 remove ${listen_port}"
   fi
 
   log "Adding NAT rule: tcp/${listen_port} -> ${dest_ip}:${dest_port}"
@@ -135,9 +140,9 @@ cmd_list() {
   if [[ $# -gt 0 ]]; then
     case "$1" in
       --format=json|--json) format="json" ;;
-      --format) shift; [[ "${1:-}" == "json" ]] && format="json" || err "Unknown format: '${1:-}'" ;;
+      --format) shift; [[ "${1:-}" == "json" ]] && format="json" || err 66 "Unknown format: '${1:-}'" ;;
       --format=text) format="text" ;;
-      *) err "Unknown list flag: '$1'" ;;
+      *) err 67 "Unknown list flag: '$1'" ;;
     esac
   fi
 
@@ -185,7 +190,7 @@ cmd_list_json() {
 
 cmd_remove() {
   local listen_port="$1"
-  valid_port "$listen_port" || err "listen-port must be 1-65535: '${listen_port}'"
+  valid_port "$listen_port" || err 62 "listen-port must be 1-65535: '${listen_port}'"
 
   local existing
   existing=$(existing_dest_for_port "$listen_port")
@@ -223,7 +228,7 @@ Usage:
   $0 list   [--format json]
   $0 remove <listen-port>
 EOF
-  exit 1
+  exit 69
 }
 
 [[ $# -gt 0 ]] || usage
@@ -242,5 +247,5 @@ case "$cmd" in
     cmd_remove "$@"
     ;;
   -h|--help) usage ;;
-  *) err "Unknown command: '${cmd}'. Use add, list, or remove." ;;
+  *) err 68 "Unknown command: '${cmd}'. Use add, list, or remove." ;;
 esac

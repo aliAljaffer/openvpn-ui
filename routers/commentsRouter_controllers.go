@@ -38,6 +38,54 @@ func init() {
 				AllowHTTPMethods: []string{"get"},
 				Params:           nil})
 
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "Summary",
+				Router:           `/summary`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "Clients",
+				Router:           `/clients`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "Disconnects",
+				Router:           `/disconnects`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "PortForwards",
+				Router:           `/portforwards`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "Certificates",
+				Router:           `/certificates`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:APIMetricsController"],
+			web.ControllerComments{
+				Method:           "Prometheus",
+				Router:           `/prometheus`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
 	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:CertificatesController"] =
 		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:CertificatesController"],
 			web.ControllerComments{

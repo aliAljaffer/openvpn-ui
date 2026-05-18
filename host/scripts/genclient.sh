@@ -22,16 +22,16 @@ CLIENT_TEMPLATE="${OPENVPN_DIR}/client-template-clean.txt"
 
 if [[ -z "$CERT_NAME" ]]; then
   echo "Usage: genclient.sh <name> [<static-ip>] [<password>]" >&2
-  exit 1
+  exit 45
 fi
 if [[ -f "$OVPN_FILE_PATH" ]]; then
   echo "Client ${CERT_NAME} already exists at ${OVPN_FILE_PATH}." >&2
-  exit 1
+  exit 46
 fi
 if [[ ! -f "$CLIENT_TEMPLATE" ]]; then
   echo "client-template-clean.txt not found at ${CLIENT_TEMPLATE}." >&2
   echo "Re-run the openvpn-ui setup script to create it." >&2
-  exit 1
+  exit 47
 fi
 
 export EASYRSA_BATCH=1

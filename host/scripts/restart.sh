@@ -19,5 +19,5 @@ case "$ACTION" in
     echo "openvpn-ui container restarted." ;;
   *)
     echo "Usage: restart.sh [openvpn-server|openvpn-ui]" >&2
-    exit 1 ;;
+    exit 81 ;;
 esac

@@ -11,8 +11,8 @@
 
 set -euo pipefail
 
-[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 1; }
-[[ $# -eq 3 ]] || { echo "Usage: $0 <access-key-id> <secret-access-key> <region>" >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 96; }
+[[ $# -eq 3 ]] || { echo "Usage: $0 <access-key-id> <secret-access-key> <region>" >&2; exit 97; }
 
 AWS_KEY_ID="$1"
 AWS_KEY_SECRET="$2"
@@ -26,7 +26,7 @@ if ! command -v aws &>/dev/null; then
   case "$arch" in
     x86_64) zip="awscli-exe-linux-x86_64.zip" ;;
     aarch64) zip="awscli-exe-linux-aarch64.zip" ;;
-    *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;;
+    *) echo "Unsupported arch: ${arch}" >&2; exit 98 ;;
   esac
   tmp="$(mktemp -d)"
   curl -fsSL "https://awscli.amazonaws.com/${zip}" -o "${tmp}/awscli.zip"

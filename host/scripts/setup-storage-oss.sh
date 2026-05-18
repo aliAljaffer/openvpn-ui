@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 1; }
-[[ $# -eq 3 ]] || { echo "Usage: $0 <access-key-id> <access-key-secret> <endpoint>" >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Must run as root" >&2; exit 93; }
+[[ $# -eq 3 ]] || { echo "Usage: $0 <access-key-id> <access-key-secret> <endpoint>" >&2; exit 94; }
 
 OSS_KEY_ID="$1"
 OSS_KEY_SECRET="$2"

@@ -24,7 +24,12 @@ DEFAULT_SRC_DIR="$(dirname "$SCRIPT_DIR")"
 GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; RESET='\033[0m'
 log()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+err()  {
+  local code=1
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && { code="$1"; shift; }
+  echo -e "${RED}[ERROR]${RESET} $*" >&2
+  exit "$code"
+}
 
 usage() {
   cat <<EOF
@@ -40,7 +45,7 @@ Options:
                         (default: ${DEFAULT_SRC_DIR})
   --skip-build          Skip the Docker build step (reuse the last built image)
 EOF
-  exit 1
+  exit 10
 }
 
 # -----------------------------------------------------------------------------
@@ -101,13 +106,13 @@ while [[ $# -gt 0 ]]; do
     --skip-build)  SKIP_BUILD="true"; shift   ;;
     completion)    print_completion;  exit 0  ;;
     -h|--help)     usage ;;
-    *)             err "Unknown option: $1. Run '$0' for usage." ;;
+    *)             err 11 "Unknown option: $1. Run '$0' for usage." ;;
   esac
 done
 
-[[ -n "$VM_IP" ]]   || err "--vm-ip is required."
-[[ -d "$SRC_DIR" ]] || err "Source directory not found: ${SRC_DIR}"
-command -v docker &>/dev/null || err "Docker is not installed on this machine. Install it from https://docs.docker.com/get-docker/"
+[[ -n "$VM_IP" ]]   || err 12 "--vm-ip is required."
+[[ -d "$SRC_DIR" ]] || err 13 "Source directory not found: ${SRC_DIR}"
+command -v docker &>/dev/null || err 14 "Docker is not installed on this machine. Install it from https://docs.docker.com/get-docker/"
 
 # Build SSH/SCP option strings
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
@@ -119,7 +124,7 @@ scopy()  { scp ${SSH_OPTS} "$@"; }
 # 1. Build the image locally for linux/amd64
 if [[ "$SKIP_BUILD" == "true" ]]; then
   docker image inspect openvpn-ui-local:latest &>/dev/null \
-    || err "No local image found. Run without --skip-build first."
+    || err 15 "No local image found. Run without --skip-build first."
   log "Skipping build — reusing existing local image."
 else
   log "Building openvpn-ui image for linux/amd64..."

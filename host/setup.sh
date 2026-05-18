@@ -58,7 +58,18 @@ PORT_FORWARDS=()
 GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; RESET='\033[0m'
 log()  { echo -e "${GREEN}[INFO]${RESET}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+err()  {
+  local code=1
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && { code="$1"; shift; }
+  echo -e "${RED}[ERROR]${RESET} $*" >&2
+  exit "$code"
+}
+
+# Wait up to 60s for the dpkg lock so unattended-upgrades on a fresh VM
+# doesn't cause apt-get to fail instantly. stderr is left visible on purpose.
+apt_get() {
+  apt-get -o DPkg::Lock::Timeout=60 -qq "$@"
+}
 
 # -----------------------------------------------------------------------------
 # Prompt helpers
@@ -121,7 +132,7 @@ Flags for 'install':
   --generate-metrics-token        Generate a random 64-char hex token and enable the API.
                                   The token is printed in the post-install summary.
 EOF
-  exit 1
+  exit 20
 }
 
 # -----------------------------------------------------------------------------
@@ -187,12 +198,12 @@ COMPLETION
 # Prerequisite checks
 # -----------------------------------------------------------------------------
 check_root() {
-  [[ "$(id -u)" -eq 0 ]] || err "This script must be run as root: sudo $0 $*"
+  [[ "$(id -u)" -eq 0 ]] || err 22 "This script must be run as root: sudo $0 $*"
 }
 
 check_openvpn() {
   log "Checking for OpenVPN..."
-  [[ -f "${OPENVPN_CONF_DIR}/server.conf" ]] || err \
+  [[ -f "${OPENVPN_CONF_DIR}/server.conf" ]] || err 23 \
 "OpenVPN server.conf not found at ${OPENVPN_CONF_DIR}/server.conf.
 Please run angristan's installer first, then re-run this script:
   curl -O https://raw.githubusercontent.com/angristan/openvpn-install/master/openvpn-install.sh
@@ -202,7 +213,7 @@ Please run angristan's installer first, then re-run this script:
 }
 
 check_scripts_src() {
-  [[ -d "$SCRIPTS_SRC" ]] || err \
+  [[ -d "$SCRIPTS_SRC" ]] || err 24 \
 "scripts/ directory not found at ${SCRIPTS_SRC}.
 Make sure you are running setup.sh from inside the host/ directory of the cloned repository."
 }
@@ -216,8 +227,8 @@ maybe_install_docker() {
   warn "Docker is not installed."
   if [[ "$force" == "true" ]] || { [[ -t 0 ]] && ask_yn "Install Docker now?"; }; then
     log "Installing Docker..."
-    apt-get update -qq  > /dev/null 2>&1
-    apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg > /dev/null 2>&1
+    apt_get update >/dev/null
+    apt_get install -y --no-install-recommends ca-certificates curl gnupg >/dev/null
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
       -o /etc/apt/keyrings/docker.asc
@@ -227,12 +238,12 @@ signed-by=/etc/apt/keyrings/docker.asc] \
 https://download.docker.com/linux/ubuntu \
 $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list
-    apt-get update -qq > /dev/null 2>&1
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin > /dev/null 2>&1
+    apt_get update >/dev/null
+    apt_get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
     systemctl enable --now docker > /dev/null 2>&1
     log "Docker installed."
   else
-    err "Docker is required. Install it and re-run this script.
+    err 25 "Docker is required. Install it and re-run this script.
 See: https://docs.docker.com/engine/install/ubuntu/"
   fi
 }
@@ -330,8 +341,8 @@ setup_storage_gcs() {
 setup_geoip() {
   log "Setting up MaxMind GeoLite2-City..."
   if ! command -v geoipupdate &>/dev/null; then
-    apt-get update -qq > /dev/null 2>&1
-    apt-get install -y -qq --no-install-recommends geoipupdate > /dev/null 2>&1
+    apt_get update >/dev/null
+    apt_get install -y --no-install-recommends geoipupdate >/dev/null
   fi
   mkdir -p /usr/share/GeoIP
   cat > /etc/GeoIP.conf <<GEOCONF
@@ -349,8 +360,8 @@ setup_tls() {
   local domain="$1" email="$2"
   log "Setting up Let's Encrypt for ${domain}..."
   if ! command -v certbot &>/dev/null; then
-    apt-get update -qq > /dev/null 2>&1
-    apt-get install -y -qq --no-install-recommends certbot > /dev/null 2>&1
+    apt_get update >/dev/null
+    apt_get install -y --no-install-recommends certbot >/dev/null
   fi
   if [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]]; then
     log "Certificate for ${domain} already exists — skipping."
@@ -510,8 +521,7 @@ setup_iptables_persistence() {
     | debconf-set-selections
   echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" \
     | debconf-set-selections
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent \
-    >/dev/null 2>&1
+  DEBIAN_FRONTEND=noninteractive apt_get install -y iptables-persistent >/dev/null
   mkdir -p /etc/iptables
   log "iptables-persistent installed."
 }
@@ -521,7 +531,7 @@ apply_port_forwards() {
   local spec lp di dp
   for spec in "${PORT_FORWARDS[@]}"; do
     [[ "$spec" =~ ^[0-9]+:[0-9.]+:[0-9]+$ ]] \
-      || err "Invalid --port-forward spec '${spec}'. Expected <listen-port>:<dest-ip>:<dest-port>."
+      || err 28 "Invalid --port-forward spec '${spec}'. Expected <listen-port>:<dest-ip>:<dest-port>."
     IFS=':' read -r lp di dp <<< "$spec"
     log "Configuring port forward: tcp/${lp} -> ${di}:${dp}"
     "${SCRIPTS_DST}/port-forward.sh" add "$lp" "$di" "$dp"
@@ -605,21 +615,21 @@ run_install() {
 
   case "$storage_provider" in
     local|oss|s3|gcs) ;;
-    *) err "Unknown --storage-provider '${storage_provider}'. Supported: local, oss, s3, gcs." ;;
+    *) err 30 "Unknown --storage-provider '${storage_provider}'. Supported: local, oss, s3, gcs." ;;
   esac
   if [[ "$storage_provider" == "oss" ]]; then
     [[ -n "$oss_key_id" && -n "$oss_key_secret" && -n "$oss_bucket" ]] \
-      || err "--storage-provider=oss requires --oss-access-key-id, --oss-access-key-secret, and --oss-bucket."
+      || err 31 "--storage-provider=oss requires --oss-access-key-id, --oss-access-key-secret, and --oss-bucket."
   fi
   if [[ "$storage_provider" == "s3" ]]; then
     [[ -n "$s3_key_id" && -n "$s3_key_secret" && -n "$s3_bucket" && -n "$s3_region" ]] \
-      || err "--storage-provider=s3 requires --s3-access-key-id, --s3-secret-access-key, --s3-bucket, and --s3-region."
+      || err 32 "--storage-provider=s3 requires --s3-access-key-id, --s3-secret-access-key, --s3-bucket, and --s3-region."
   fi
   if [[ "$storage_provider" == "gcs" ]]; then
     [[ -n "$gcs_bucket" && -n "$gcs_src_key" ]] \
-      || err "--storage-provider=gcs requires --gcs-bucket and --gcs-key-file."
+      || err 33 "--storage-provider=gcs requires --gcs-bucket and --gcs-key-file."
     [[ -f "$gcs_src_key" ]] \
-      || err "--gcs-key-file '${gcs_src_key}' not found."
+      || err 34 "--gcs-key-file '${gcs_src_key}' not found."
   fi
 
   check_openvpn
@@ -628,7 +638,7 @@ run_install() {
 
   if ! command -v crontab &>/dev/null; then
     log "Installing cron..."
-    apt-get install -y -qq cron > /dev/null 2>&1
+    apt_get install -y cron >/dev/null
     systemctl enable --now cron > /dev/null 2>&1
     log "cron installed."
   fi
@@ -867,7 +877,7 @@ case "$COMMAND" in
   init)       run_init;         exit 0 ;;
   install)    : ;;  # fall through to flag parsing below
   -h|--help)  usage ;;
-  *)          err "Unknown command: '${COMMAND}'. Run '$0' for usage." ;;
+  *)          err 21 "Unknown command: '${COMMAND}'. Run '$0' for usage." ;;
 esac
 
 # Non-interactive: parse flags
@@ -909,14 +919,14 @@ while [[ $# -gt 0 ]]; do
     --metrics-token)         METRICS_TOKEN="$2";                  shift 2 ;;
     --generate-metrics-token) METRICS_TOKEN="$(openssl rand -hex 32)"; shift ;;
     --port-forward)
-      [[ -n "${2:-}" ]] || err "--port-forward requires <listen-port>:<dest-ip>:<dest-port>"
+      [[ -n "${2:-}" ]] || err 27 "--port-forward requires <listen-port>:<dest-ip>:<dest-port>"
       PORT_FORWARDS+=("$2"); shift 2 ;;
-    *) err "Unknown flag: $1. Run '$0 install' with no flags to see usage." ;;
+    *) err 26 "Unknown flag: $1. Run '$0 install' with no flags to see usage." ;;
   esac
 done
 
 [[ -n "$ADMIN_PASS" ]] \
-  || err "--admin-password is required for non-interactive setup.
+  || err 29 "--admin-password is required for non-interactive setup.
 For a guided setup, use: sudo $0 init"
 
 # Storage provider default: explicit flag wins; otherwise infer from provider-
