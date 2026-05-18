@@ -1,5 +1,5 @@
 # Stage 1: compile openvpn-ui with geoip2 support
-FROM golang:1.23.4-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 WORKDIR /go/src/github.com/d3vilh/openvpn-ui
 COPY . .
 RUN apt-get update -qq && apt-get install -y --no-install-recommends gcc musl-tools
