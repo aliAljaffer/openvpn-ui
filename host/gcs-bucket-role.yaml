@@ -1,0 +1,26 @@
+# Custom IAM role for the openvpn-ui GCS log archive backend.
+#
+# This role grants only the object-level permissions the openvpn-ui app and
+# the host-side log-rotation cron need on the archive bucket. Grant it on
+# the bucket (not project-wide) to the service account whose JSON key file
+# is configured via --gcs-key-file. The predefined role
+# roles/storage.objectAdmin scoped to the bucket is an acceptable shortcut.
+#
+# Create with:
+#   gcloud iam roles create openvpnUiLogArchive \
+#     --project=YOUR_GCP_PROJECT_ID \
+#     --file=gcs-bucket-role.yaml
+#
+# Grant the role to the service account on the bucket:
+#   gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET_NAME \
+#     --member=serviceAccount:openvpn-ui@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com \
+#     --role=projects/YOUR_GCP_PROJECT_ID/roles/openvpnUiLogArchive
+
+title: "openvpn-ui Log Archive"
+description: "Object-level permissions on the openvpn-ui archive bucket"
+stage: GA
+includedPermissions:
+  - storage.objects.create
+  - storage.objects.get
+  - storage.objects.list
+  - storage.objects.delete

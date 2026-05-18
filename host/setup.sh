@@ -14,13 +14,20 @@
 #   --admin-password <pass>         Admin password (required)
 #   --maxmind-account-id <id>       MaxMind account ID — enables map view
 #   --maxmind-license-key <key>     MaxMind license key
-#   --storage-provider <name>       Log archive backend: local|oss (default: local)
+#   --storage-provider <name>       Log archive backend: local|oss|s3|gcs (default: local)
 #   --local-log-dir <path>          Archive directory for --storage-provider=local
 #                                   (default: /var/log/openvpn-ui/archives)
 #   --oss-access-key-id <id>        OSS access key ID (required when --storage-provider=oss)
 #   --oss-access-key-secret <sk>    OSS access key secret
 #   --oss-bucket <name>             OSS bucket name
 #   --oss-endpoint <endpoint>       OSS endpoint (default: oss-me-central-1.aliyuncs.com)
+#   --s3-access-key-id <id>         AWS access key ID (required when --storage-provider=s3)
+#   --s3-secret-access-key <sk>     AWS secret access key
+#   --s3-bucket <name>              S3 bucket name
+#   --s3-region <region>            AWS region (e.g. us-east-1)
+#   --gcs-bucket <name>             GCS bucket name (required when --storage-provider=gcs)
+#   --gcs-project-id <id>           GCP project ID
+#   --gcs-key-file <path>           Path on this VM to a GCP service account JSON key file
 #   --domain <domain>               Domain for Let's Encrypt (HTTPS is always on; self-signed used if omitted)
 #   --admin-email <email>           Email for Let's Encrypt (required with --domain)
 #   --client-add-form-url <url>     URL shown in place of the Create button (default: Jira form)
@@ -42,6 +49,7 @@ UI_PORT=8080
 UI_HTTPS_PORT=8443
 DEFAULT_CLIENT_ADD_FORM_URL="https://saudiazmco.atlassian.net/jira/software/form/5853af35-6b8b-4644-84a5-682940f49914"
 DEFAULT_LOCAL_LOG_DIR="/var/log/openvpn-ui/archives"
+DEFAULT_GCS_KEY_DEST="/etc/openvpn-ui/gcs-sa-key.json"
 
 # Repeatable --port-forward specs collected during flag parsing or interactive init.
 # Each element is "<listen-port>:<dest-ip>:<dest-port>".
@@ -87,13 +95,20 @@ Flags for 'install':
   --admin-password <pass>         Admin password (required)
   --maxmind-account-id <id>       MaxMind account ID — enables the map view
   --maxmind-license-key <key>     MaxMind license key
-  --storage-provider <name>       Log archive backend: local|oss (default: local)
+  --storage-provider <name>       Log archive backend: local|oss|s3|gcs (default: local)
   --local-log-dir <path>          Archive directory for the local backend
                                   (default: ${DEFAULT_LOCAL_LOG_DIR})
   --oss-access-key-id <id>        Alibaba Cloud OSS access key ID (storage-provider=oss)
   --oss-access-key-secret <sk>    Alibaba Cloud OSS access key secret
   --oss-bucket <name>             OSS bucket name
   --oss-endpoint <endpoint>       OSS endpoint (default: oss-me-central-1.aliyuncs.com)
+  --s3-access-key-id <id>         AWS access key ID (storage-provider=s3)
+  --s3-secret-access-key <sk>     AWS secret access key
+  --s3-bucket <name>              S3 bucket name
+  --s3-region <region>            AWS region (e.g. us-east-1)
+  --gcs-bucket <name>             GCS bucket name (storage-provider=gcs)
+  --gcs-project-id <id>           GCP project ID
+  --gcs-key-file <path>           Path on this VM to a GCP service account JSON key file
   --domain <domain>               Domain name for HTTPS (e.g. vpn.example.com)
   --admin-email <email>           Email for Let's Encrypt (required with --domain)
   --install-docker                Install Docker automatically if not present
@@ -124,6 +139,8 @@ _setup_openvpn_ui() {
     --admin-username|--admin-password|--maxmind-account-id|--maxmind-license-key| \\
     --storage-provider|--local-log-dir| \\
     --oss-access-key-id|--oss-access-key-secret|--oss-bucket|--oss-endpoint| \\
+    --s3-access-key-id|--s3-secret-access-key|--s3-bucket|--s3-region| \\
+    --gcs-bucket|--gcs-project-id|--gcs-key-file| \\
     --domain|--admin-email|--client-add-form-url|--port-forward)
       return 0 ;;
   esac
@@ -147,6 +164,8 @@ _setup_openvpn_ui() {
         --maxmind-account-id --maxmind-license-key
         --storage-provider --local-log-dir
         --oss-access-key-id --oss-access-key-secret --oss-bucket --oss-endpoint
+        --s3-access-key-id --s3-secret-access-key --s3-bucket --s3-region
+        --gcs-bucket --gcs-project-id --gcs-key-file
         --domain --admin-email
         --client-add-form-url --client-add-enabled
         --port-forward
@@ -291,6 +310,18 @@ setup_storage_oss() {
   "${SCRIPTS_DST}/setup-storage-oss.sh" "$key_id" "$key_secret" "$endpoint"
 }
 
+setup_storage_s3() {
+  local key_id="$1" key_secret="$2" region="$3"
+  log "Configuring AWS S3 storage..."
+  "${SCRIPTS_DST}/setup-storage-s3.sh" "$key_id" "$key_secret" "$region"
+}
+
+setup_storage_gcs() {
+  local src_key="$1" dest_key="$2"
+  log "Configuring GCP Cloud Storage..."
+  "${SCRIPTS_DST}/setup-storage-gcs.sh" "$src_key" "$dest_key"
+}
+
 setup_geoip() {
   log "Setting up MaxMind GeoLite2-City..."
   if ! command -v geoipupdate &>/dev/null; then
@@ -356,8 +387,10 @@ setup_selfsigned_tls() {
 write_app_conf() {
   local geoip_path="${1:-}" storage_provider="${2:-local}" local_log_dir="${3:-$DEFAULT_LOCAL_LOG_DIR}"
   local oss_bucket="${4:-}" oss_endpoint="${5:-}"
-  local tls_cert="${6:-}" tls_key="${7:-}"
-  local client_add_disabled="${8:-true}" client_add_form_url="${9:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local s3_bucket="${6:-}" s3_region="${7:-}"
+  local gcs_bucket="${8:-}" gcs_project="${9:-}" gcs_key_path="${10:-}"
+  local tls_cert="${11:-}" tls_key="${12:-}"
+  local client_add_disabled="${13:-true}" client_add_form_url="${14:-$DEFAULT_CLIENT_ADD_FORM_URL}"
 
   local server_ip
   server_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
@@ -383,6 +416,11 @@ StorageProvider            = ${storage_provider}
 LocalLogDir                = ${local_log_dir}
 OSSLogBucket               = ${oss_bucket}
 OSSEndpoint                = ${oss_endpoint}
+S3LogBucket                = ${s3_bucket}
+S3Region                   = ${s3_region}
+GCSLogBucket               = ${gcs_bucket}
+GCSProjectID               = ${gcs_project}
+GCSServiceAccountKeyFile   = ${gcs_key_path}
 ServerAddress              = ${server_ip}
 ClientAddDisabled          = ${client_add_disabled}
 ClientAddFormURL           = ${client_add_form_url}
@@ -402,7 +440,7 @@ APPCONF_TLS
 write_compose() {
   local admin_user="$1" admin_pass="$2"
   local geoip_enabled="${3:-false}" storage_provider="${4:-local}" local_log_dir="${5:-$DEFAULT_LOCAL_LOG_DIR}"
-  local domain="${6:-}"
+  local domain="${6:-}" gcs_key_path="${7:-$DEFAULT_GCS_KEY_DEST}"
 
   {
     cat <<COMPOSE
@@ -432,6 +470,12 @@ COMPOSE
       oss)
         echo "      - /root/.ossutilconfig:/root/.ossutilconfig:ro"
         echo "      - /usr/bin/ossutil:/usr/bin/ossutil:ro"
+        ;;
+      s3)
+        echo "      - /root/.aws:/root/.aws:ro"
+        ;;
+      gcs)
+        echo "      - ${gcs_key_path}:${gcs_key_path}:ro"
         ;;
     esac
     [[ "$geoip_enabled" == "true" ]] && echo "      - /usr/share/GeoIP:/usr/share/GeoIP:ro"
@@ -528,20 +572,34 @@ run_install() {
   local storage_provider="$5"  local_log_dir="$6"
   local oss_key_id="$7"        oss_key_secret="$8"
   local oss_bucket="$9"        oss_endpoint="${10}"
-  local domain="${11}"         admin_email="${12}"
-  local install_docker="${13:-false}"
-  local client_add_disabled="${14:-true}"
-  local client_add_form_url="${15:-$DEFAULT_CLIENT_ADD_FORM_URL}"
+  local s3_key_id="${11}"      s3_key_secret="${12}"
+  local s3_bucket="${13}"      s3_region="${14}"
+  local gcs_bucket="${15}"     gcs_project="${16}"     gcs_src_key="${17}"
+  local domain="${18}"         admin_email="${19}"
+  local install_docker="${20:-false}"
+  local client_add_disabled="${21:-true}"
+  local client_add_form_url="${22:-$DEFAULT_CLIENT_ADD_FORM_URL}"
 
   local geoip_path="" geoip_enabled="false"
+  local gcs_key_dest="$DEFAULT_GCS_KEY_DEST"
 
   case "$storage_provider" in
-    local|oss) ;;
-    *) err "Unknown --storage-provider '${storage_provider}'. Supported: local, oss." ;;
+    local|oss|s3|gcs) ;;
+    *) err "Unknown --storage-provider '${storage_provider}'. Supported: local, oss, s3, gcs." ;;
   esac
   if [[ "$storage_provider" == "oss" ]]; then
     [[ -n "$oss_key_id" && -n "$oss_key_secret" && -n "$oss_bucket" ]] \
       || err "--storage-provider=oss requires --oss-access-key-id, --oss-access-key-secret, and --oss-bucket."
+  fi
+  if [[ "$storage_provider" == "s3" ]]; then
+    [[ -n "$s3_key_id" && -n "$s3_key_secret" && -n "$s3_bucket" && -n "$s3_region" ]] \
+      || err "--storage-provider=s3 requires --s3-access-key-id, --s3-secret-access-key, --s3-bucket, and --s3-region."
+  fi
+  if [[ "$storage_provider" == "gcs" ]]; then
+    [[ -n "$gcs_bucket" && -n "$gcs_src_key" ]] \
+      || err "--storage-provider=gcs requires --gcs-bucket and --gcs-key-file."
+    [[ -f "$gcs_src_key" ]] \
+      || err "--gcs-key-file '${gcs_src_key}' not found."
   fi
 
   check_openvpn
@@ -564,11 +622,25 @@ run_install() {
   case "$storage_provider" in
     local)
       setup_storage_local "$local_log_dir"
-      # Clear OSS fields so the cron rotation script doesn't try to upload.
+      # Clear cloud fields so the cron rotation script doesn't try to upload.
       oss_bucket=""; oss_endpoint=""
+      s3_bucket=""; s3_region=""
+      gcs_bucket=""; gcs_project=""; gcs_key_dest=""
       ;;
     oss)
       setup_storage_oss "$oss_key_id" "$oss_key_secret" "$oss_endpoint"
+      s3_bucket=""; s3_region=""
+      gcs_bucket=""; gcs_project=""; gcs_key_dest=""
+      ;;
+    s3)
+      setup_storage_s3 "$s3_key_id" "$s3_key_secret" "$s3_region"
+      oss_bucket=""; oss_endpoint=""
+      gcs_bucket=""; gcs_project=""; gcs_key_dest=""
+      ;;
+    gcs)
+      setup_storage_gcs "$gcs_src_key" "$gcs_key_dest"
+      oss_bucket=""; oss_endpoint=""
+      s3_bucket=""; s3_region=""
       ;;
   esac
 
@@ -592,10 +664,13 @@ run_install() {
   fi
 
   write_app_conf "$geoip_path" "$storage_provider" "$local_log_dir" \
-    "$oss_bucket" "$oss_endpoint" "$tls_cert" "$tls_key" \
+    "$oss_bucket" "$oss_endpoint" \
+    "$s3_bucket" "$s3_region" \
+    "$gcs_bucket" "$gcs_project" "$gcs_key_dest" \
+    "$tls_cert" "$tls_key" \
     "$client_add_disabled" "$client_add_form_url"
   write_compose "$admin_user" "$admin_pass" "$geoip_enabled" \
-    "$storage_provider" "$local_log_dir" "$domain"
+    "$storage_provider" "$local_log_dir" "$domain" "$gcs_key_dest"
   setup_cron
   setup_iptables_persistence
   apply_port_forwards
@@ -644,27 +719,49 @@ run_init() {
   # Log archive storage backend
   local storage_provider="local" local_log_dir="$DEFAULT_LOCAL_LOG_DIR"
   local oss_key_id="" oss_key_secret="" oss_bucket="" oss_endpoint="oss-me-central-1.aliyuncs.com"
+  local s3_key_id="" s3_key_secret="" s3_bucket="" s3_region="us-east-1"
+  local gcs_bucket="" gcs_project="" gcs_src_key=""
   echo ""
   echo "--- Log Archive Storage ---"
   echo "Where to store compressed OpenVPN session log archives (read by the audit log browser)."
   echo "  local — write archives to a directory on this VM (no credentials required)"
   echo "  oss   — upload archives to an Alibaba Cloud OSS bucket"
+  echo "  s3    — upload archives to an AWS S3 bucket"
+  echo "  gcs   — upload archives to a GCP Cloud Storage bucket"
   while true; do
-    storage_provider=$(ask_value "Storage backend (local/oss)" "local")
+    storage_provider=$(ask_value "Storage backend (local/oss/s3/gcs)" "local")
     storage_provider="${storage_provider,,}"
     case "$storage_provider" in
-      local|oss) break ;;
-      *) warn "Choose 'local' or 'oss'." ;;
+      local|oss|s3|gcs) break ;;
+      *) warn "Choose 'local', 'oss', 's3', or 'gcs'." ;;
     esac
   done
-  if [[ "$storage_provider" == "local" ]]; then
-    local_log_dir=$(ask_value "Local archive directory" "$DEFAULT_LOCAL_LOG_DIR")
-  else
-    oss_key_id=$(ask_value "OSS Access Key ID")
-    oss_key_secret=$(ask_value "OSS Access Key Secret" "" "true")
-    oss_bucket=$(ask_value "OSS Bucket Name")
-    oss_endpoint=$(ask_value "OSS Endpoint" "oss-me-central-1.aliyuncs.com")
-  fi
+  case "$storage_provider" in
+    local)
+      local_log_dir=$(ask_value "Local archive directory" "$DEFAULT_LOCAL_LOG_DIR")
+      ;;
+    oss)
+      oss_key_id=$(ask_value "OSS Access Key ID")
+      oss_key_secret=$(ask_value "OSS Access Key Secret" "" "true")
+      oss_bucket=$(ask_value "OSS Bucket Name")
+      oss_endpoint=$(ask_value "OSS Endpoint" "oss-me-central-1.aliyuncs.com")
+      ;;
+    s3)
+      s3_key_id=$(ask_value "AWS Access Key ID")
+      s3_key_secret=$(ask_value "AWS Secret Access Key" "" "true")
+      s3_bucket=$(ask_value "S3 Bucket Name")
+      s3_region=$(ask_value "AWS Region" "us-east-1")
+      ;;
+    gcs)
+      gcs_bucket=$(ask_value "GCS Bucket Name")
+      gcs_project=$(ask_value "GCP Project ID")
+      while true; do
+        gcs_src_key=$(ask_value "Path to GCP service-account JSON key on this VM")
+        [[ -f "$gcs_src_key" ]] && break
+        warn "File not found: ${gcs_src_key}"
+      done
+      ;;
+  esac
 
   # Client creation restriction — optional
   local client_add_disabled="true" client_add_form_url="$DEFAULT_CLIENT_ADD_FORM_URL"
@@ -716,6 +813,8 @@ run_init() {
     "$maxmind_id"        "$maxmind_key" \
     "$storage_provider"  "$local_log_dir" \
     "$oss_key_id"        "$oss_key_secret" "$oss_bucket" "$oss_endpoint" \
+    "$s3_key_id"         "$s3_key_secret"  "$s3_bucket"  "$s3_region" \
+    "$gcs_bucket"        "$gcs_project"    "$gcs_src_key" \
     "$domain"            "$admin_email" \
     "false" \
     "$client_add_disabled" "$client_add_form_url"
@@ -743,6 +842,8 @@ ADMIN_USER="admin"; ADMIN_PASS=""
 MAXMIND_ID="";      MAXMIND_KEY=""
 STORAGE_PROVIDER=""; LOCAL_LOG_DIR="$DEFAULT_LOCAL_LOG_DIR"
 OSS_KEY_ID="";      OSS_KEY_SECRET=""; OSS_BUCKET=""; OSS_ENDPOINT="oss-me-central-1.aliyuncs.com"
+S3_KEY_ID="";       S3_KEY_SECRET="";  S3_BUCKET="";  S3_REGION=""
+GCS_BUCKET="";      GCS_PROJECT="";    GCS_KEY_FILE=""
 DOMAIN="";          ADMIN_EMAIL=""
 INSTALL_DOCKER="false"
 CLIENT_ADD_DISABLED="true"; CLIENT_ADD_FORM_URL="$DEFAULT_CLIENT_ADD_FORM_URL"
@@ -759,6 +860,13 @@ while [[ $# -gt 0 ]]; do
     --oss-access-key-secret) OSS_KEY_SECRET="$2";   shift 2 ;;
     --oss-bucket)            OSS_BUCKET="$2";       shift 2 ;;
     --oss-endpoint)          OSS_ENDPOINT="$2";     shift 2 ;;
+    --s3-access-key-id)      S3_KEY_ID="$2";        shift 2 ;;
+    --s3-secret-access-key)  S3_KEY_SECRET="$2";    shift 2 ;;
+    --s3-bucket)             S3_BUCKET="$2";        shift 2 ;;
+    --s3-region)             S3_REGION="$2";        shift 2 ;;
+    --gcs-bucket)            GCS_BUCKET="$2";       shift 2 ;;
+    --gcs-project-id)        GCS_PROJECT="$2";      shift 2 ;;
+    --gcs-key-file)          GCS_KEY_FILE="$2";     shift 2 ;;
     --domain)                DOMAIN="$2";           shift 2 ;;
     --admin-email)           ADMIN_EMAIL="$2";      shift 2 ;;
     --install-docker)        INSTALL_DOCKER="true";                shift   ;;
@@ -775,13 +883,13 @@ done
   || err "--admin-password is required for non-interactive setup.
 For a guided setup, use: sudo $0 init"
 
-# Storage provider default: explicit flag wins; otherwise infer oss from OSS
-# flags so existing scripts/integrations keep working; otherwise default to local.
+# Storage provider default: explicit flag wins; otherwise infer from provider-
+# specific flags so existing scripts/integrations keep working; otherwise local.
 if [[ -z "$STORAGE_PROVIDER" ]]; then
-  if [[ -n "$OSS_KEY_ID" || -n "$OSS_BUCKET" ]]; then
-    STORAGE_PROVIDER="oss"
-  else
-    STORAGE_PROVIDER="local"
+  if   [[ -n "$OSS_KEY_ID" || -n "$OSS_BUCKET" ]]; then STORAGE_PROVIDER="oss"
+  elif [[ -n "$S3_KEY_ID"  || -n "$S3_BUCKET"  ]]; then STORAGE_PROVIDER="s3"
+  elif [[ -n "$GCS_BUCKET" || -n "$GCS_KEY_FILE" ]]; then STORAGE_PROVIDER="gcs"
+  else STORAGE_PROVIDER="local"
   fi
 fi
 
@@ -790,6 +898,8 @@ run_install \
   "$MAXMIND_ID"        "$MAXMIND_KEY" \
   "$STORAGE_PROVIDER"  "$LOCAL_LOG_DIR" \
   "$OSS_KEY_ID"        "$OSS_KEY_SECRET" "$OSS_BUCKET" "$OSS_ENDPOINT" \
+  "$S3_KEY_ID"         "$S3_KEY_SECRET"  "$S3_BUCKET"  "$S3_REGION" \
+  "$GCS_BUCKET"        "$GCS_PROJECT"    "$GCS_KEY_FILE" \
   "$DOMAIN"            "$ADMIN_EMAIL" \
   "$INSTALL_DOCKER" \
   "$CLIENT_ADD_DISABLED" "$CLIENT_ADD_FORM_URL"

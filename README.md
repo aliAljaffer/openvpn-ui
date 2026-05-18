@@ -31,7 +31,11 @@ extends it with production-oriented features specific to our deployment.
   Disk usage is negligible in practice — ~14 kB/day in real-world use.
 - `oss` — uploads archives to an Alibaba Cloud OSS bucket. Requires a RAM
   user (see permissions below).
-- Backend is selected via `--storage-provider local|oss` in `setup.sh`,
+- `s3` — uploads archives to an AWS S3 bucket. Requires an IAM user/role
+  (see `host/aws-s3-iam-policy.json`).
+- `gcs` — uploads archives to a GCP Cloud Storage bucket. Requires a service
+  account with a bucket-scoped role (see `host/gcs-bucket-role.yaml`).
+- Backend is selected via `--storage-provider local|oss|s3|gcs` in `setup.sh`,
   or by editing `StorageProvider` in `app.conf` and restarting the container.
   The audit log browser and the rotation script both honor this setting.
 
@@ -74,8 +78,9 @@ extends it with production-oriented features specific to our deployment.
 
 **Optional, for extra features:**
 - A free [MaxMind account](https://www.maxmind.com) — enables the map view
-- An Alibaba Cloud OSS bucket with a RAM user — only if you want cloud-backed
-  log archive storage; otherwise the local backend is used and needs nothing
+- A cloud-bucket store for log archives — only if you want cloud-backed
+  log archive storage; otherwise the local backend is used and needs nothing.
+  Supported: Alibaba Cloud OSS, AWS S3, or GCP Cloud Storage.
 - A domain name pointed at the VM — enables HTTPS
 
 ---
@@ -137,8 +142,9 @@ This is an interactive guided setup. It will ask you:
 
 1. **Admin username and password** — for logging into the web UI
 2. **Map view** — whether to enable it (requires a MaxMind account)
-3. **Log archive storage backend** — `local` (default, no credentials) or `oss`
-   (Alibaba Cloud OSS bucket). Both feed the same audit log browser.
+3. **Log archive storage backend** — `local` (default, no credentials),
+   `oss` (Alibaba Cloud OSS), `s3` (AWS S3), or `gcs` (GCP Cloud Storage).
+   All four feed the same audit log browser.
 4. **Client creation** — whether direct creation is enabled in the UI, or
    whether the Create button is replaced by a link to an external request form
 5. **Port forwarding** — optional TCP port-forward rules from the VPN VM to
@@ -255,17 +261,29 @@ StorageProvider            = local
 LocalLogDir                = /var/log/openvpn-ui/archives
 OSSLogBucket               =
 OSSEndpoint                = oss-me-central-1.aliyuncs.com
+S3LogBucket                =
+S3Region                   =
+GCSLogBucket               =
+GCSProjectID               =
+GCSServiceAccountKeyFile   =
 ```
 
 Key settings:
 
 - `GeoipDbPath` — leave empty to disable the map view and geo lookup in audit logs
-- `StorageProvider` — `local` or `oss`. Selects where rotated `.log.gz` archives
-  are written and where the audit log browser reads from. If unset and
-  `OSSLogBucket` is non-empty, defaults to `oss` for backwards compatibility;
-  otherwise defaults to `local`.
+- `StorageProvider` — `local`, `oss`, `s3`, or `gcs`. Selects where rotated
+  `.log.gz` archives are written and where the audit log browser reads from.
+  If unset and `OSSLogBucket` is non-empty, defaults to `oss` for backwards
+  compatibility; otherwise defaults to `local`.
 - `LocalLogDir` — archive directory used by the `local` backend
-- `OSSLogBucket` — bucket name used by the `oss` backend (ignored for `local`)
+- `OSSLogBucket` / `OSSEndpoint` — used by the `oss` backend
+- `S3LogBucket` / `S3Region` — used by the `s3` backend. Credentials are read
+  from the standard AWS chain (`/root/.aws/credentials` on the VM, mounted
+  read-only into the container).
+- `GCSLogBucket` / `GCSServiceAccountKeyFile` — used by the `gcs` backend.
+  The key file is mounted read-only into the container at the same path.
+  `GCSProjectID` is informational (the Go SDK derives the project from the
+  service-account JSON).
 - `OpenVpnManagementAddress` — must match the `management` line in `server.conf`
 
 Optional TLS settings (added by `setup.sh` when a domain is configured):
@@ -299,10 +317,12 @@ services:
       - /opt/openvpn-ui/conf:/opt/openvpn-ui/conf
       - /opt/scripts:/opt/scripts
       - /root:/root
-      # Storage backend (one of):
-      - /var/log/openvpn-ui/archives:/var/log/openvpn-ui/archives   # StorageProvider=local
-      - /root/.ossutilconfig:/root/.ossutilconfig:ro                # StorageProvider=oss
-      - /usr/share/GeoIP:/usr/share/GeoIP:ro                        # if map view enabled
+      # Storage backend (exactly one is mounted, chosen by StorageProvider):
+      - /var/log/openvpn-ui/archives:/var/log/openvpn-ui/archives    # local
+      - /root/.ossutilconfig:/root/.ossutilconfig:ro                 # oss
+      - /root/.aws:/root/.aws:ro                                     # s3
+      - /etc/openvpn-ui/gcs-sa-key.json:/etc/openvpn-ui/gcs-sa-key.json:ro  # gcs
+      - /usr/share/GeoIP:/usr/share/GeoIP:ro                         # if map view enabled
     restart: always
 ```
 
@@ -351,6 +371,82 @@ Replace `your-bucket-name` with your actual bucket name.
 
 `oss:DeleteObject` is only needed if you run the smoke test. It can be omitted
 from the production policy if preferred.
+
+### AWS S3 IAM policy (only when `StorageProvider=s3`)
+
+The IAM user/role supplied to `setup.sh` needs the following policy attached,
+scoped to your bucket. A ready-to-paste version with placeholders is shipped at
+`host/aws-s3-iam-policy.json`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OpenvpnUiBucketScopedListing",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME"
+    },
+    {
+      "Sid": "OpenvpnUiObjectIO",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+    }
+  ]
+}
+```
+
+Replace `YOUR_BUCKET_NAME` with your actual bucket name.
+
+| Permission | Used by |
+|---|---|
+| `s3:ListBucket` | Log browser — lists available archives |
+| `s3:GetBucketLocation` | AWS SDK — region discovery |
+| `s3:GetObject` | Log browser — downloads an archive to parse it |
+| `s3:PutObject` | Log rotation cron — uploads compressed log archives |
+| `s3:DeleteObject` | Only needed if you keep a smoke-test command around |
+
+`s3:DeleteObject` can be omitted from the production policy if you don't run
+a delete-style smoke test.
+
+### GCS bucket role (only when `StorageProvider=gcs`)
+
+The service account whose JSON key file is supplied to `setup.sh` needs
+object-level access on the bucket. The shipped role definition at
+`host/gcs-bucket-role.yaml` defines a custom role with exactly the
+permissions needed. The simpler shortcut is to grant the predefined role
+`roles/storage.objectAdmin` to the service account, scoped to the bucket
+(not project-wide).
+
+Custom role (recommended):
+
+```bash
+gcloud iam roles create openvpnUiLogArchive \
+  --project=YOUR_GCP_PROJECT_ID \
+  --file=host/gcs-bucket-role.yaml
+
+gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET_NAME \
+  --member=serviceAccount:openvpn-ui@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com \
+  --role=projects/YOUR_GCP_PROJECT_ID/roles/openvpnUiLogArchive
+```
+
+Permissions included:
+
+| Permission | Used by |
+|---|---|
+| `storage.objects.list` | Log browser — lists available archives |
+| `storage.objects.get` | Log browser — downloads an archive to parse it |
+| `storage.objects.create` | Log rotation cron — uploads compressed log archives |
+| `storage.objects.delete` | Only needed for a delete-style smoke test |
 
 ### OSS credentials
 
@@ -468,15 +564,6 @@ run privileged.
 ---
 
 ## Future plans
-
-**More log storage backends (S3, GCS)**
-
-Local filesystem and Alibaba Cloud OSS are supported today. The plan is to
-extend the storage backend interface to AWS S3 and GCP Cloud Storage so the
-same audit log browser works against any of the four. The archive format and
-browser experience stay identical regardless of where the logs live.
-
----
 
 **Multi-cloud provisioning (AWS EC2 and GCP Compute Engine)**
 
