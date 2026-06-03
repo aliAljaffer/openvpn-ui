@@ -71,6 +71,14 @@ extends it with production-oriented features specific to our deployment.
 
 ## Setup
 
+> **Setting up on a specific cloud?** Follow the end-to-end provisioning
+> walkthrough for your provider instead of the generic steps below:
+> - **[SETUP-ALIBABA.md](./SETUP-ALIBABA.md)** — Alibaba Cloud ECS
+> - **[SETUP-GCP.md](./SETUP-GCP.md)** — Google Cloud Compute Engine
+>
+> The steps below are the generic, provider-agnostic path for a VM you already
+> have (bare-metal, on-prem, or any other cloud).
+
 ### What you need
 
 **On the VM (your VPN server):**
