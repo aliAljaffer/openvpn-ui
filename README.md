@@ -526,14 +526,29 @@ If an archive shows "no events found", verify the log was collected with
 
 **Recently disconnected map markers**
 
-The map reads `/opt/scripts/ovpn-master.log` for sessions that ended within
-the last 4 hours. If the master log is empty after a rotation, restore the
-most recent archive to repopulate it:
+Disconnects are recorded by the OpenVPN `client-disconnect` hook
+(`/opt/scripts/client-disconnect.sh`) into a small JSON store at
+`/opt/scripts/recent-disconnects.json`. The Map View reads that store and draws
+faded markers for sessions that ended within the last hour; older entries are
+pruned automatically. This replaces the previous approach of parsing
+`ovpn-master.log`, which lost disconnects whenever the log was rotated.
+
+The hook is wired into `server.conf` automatically by `host/setup.sh`
+(`setup_disconnect_hook`):
+
+```
+script-security 2
+client-disconnect /opt/scripts/client-disconnect.sh
+```
+
+Override the store location with `RecentDisconnectsPath` in `conf/app.conf`
+(and `RECENT_DISCONNECTS_PATH` for the hook) if needed.
+
+To populate example markers for a quick end-to-end check (each visible for up to
+one hour, then self-expiring):
 
 ```bash
-ossutil cp oss://your-bucket/openvpn-logs-YYYY-MM-DD-HHmmss.log.gz /tmp/r.log.gz \
-  --endpoint oss-me-central-1.aliyuncs.com -f
-zcat /tmp/r.log.gz > /opt/scripts/ovpn-master.log
+sudo /opt/scripts/seed-recent-disconnects.sh
 ```
 
 **OSS SDK smoke test**

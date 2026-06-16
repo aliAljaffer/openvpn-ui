@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"html/template"
+	"os"
 	"time"
 
 	"github.com/beego/beego/v2/core/logs"
@@ -72,16 +73,49 @@ func (c *MapViewController) Get() {
 }
 
 const (
-	masterLogPath   = "/opt/scripts/ovpn-master.log"
-	recentWindow    = 4 * time.Hour
+	recentDisconnectsDefaultPath = "/opt/scripts/recent-disconnects.json"
+	recentWindow                 = time.Hour
 )
 
-// appendRecentDisconnects parses the current master log, finds sessions that
-// ended within the last recentWindow and are not currently in the MI client list,
+// recentDisconnect is one entry in the JSON store written by
+// host/scripts/client-disconnect.sh (and seed-recent-disconnects.sh).
+//
+// The live hook writes only cn/ip/epoch/duration and lets the controller
+// geo-enrich by IP (mirroring the active-client path). Country/City/Lat/Lng are
+// optional: when present (e.g. from the seed) they're used as-is, so a marker
+// shows even if the GeoIP DB can't resolve that IP.
+type recentDisconnect struct {
+	CN       string  `json:"cn"`
+	IP       string  `json:"ip"`
+	Epoch    int64   `json:"disconnect_epoch"`
+	Duration string  `json:"duration"`
+	Country  string  `json:"country,omitempty"`
+	City     string  `json:"city,omitempty"`
+	Lat      float64 `json:"lat,omitempty"`
+	Lng      float64 `json:"lng,omitempty"`
+}
+
+// appendRecentDisconnects reads the recent-disconnects JSON store, keeps sessions
+// that ended within the last recentWindow and are not currently connected,
 // geo-enriches them, and appends them to geoClients as IsDisconnected entries.
+//
+// The store is populated by the OpenVPN client-disconnect hook rather than parsed
+// from the rolling master log, so disconnect events survive log rotation.
 func appendRecentDisconnects(geoClients []lib.GeoClient, active []*mi.OVClient, dbPath string) []lib.GeoClient {
-	sessions, err := lib.ParseLogFile(masterLogPath)
-	if err != nil || len(sessions) == 0 {
+	path, _ := beegoWeb.AppConfig.String("RecentDisconnectsPath")
+	if path == "" {
+		path = recentDisconnectsDefaultPath
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		// Missing store just means no disconnects have been recorded yet.
+		return geoClients
+	}
+
+	var records []recentDisconnect
+	if err := json.Unmarshal(raw, &records); err != nil {
+		logs.Warn("MapView: could not parse recent-disconnects store:", err)
 		return geoClients
 	}
 
@@ -90,41 +124,51 @@ func appendRecentDisconnects(geoClients []lib.GeoClient, active []*mi.OVClient, 
 		activeCNs[c.CommonName] = true
 	}
 
-	cutoff := time.Now().Add(-recentWindow)
-	var recentIPs []string
-	var recentSessions []lib.AuditEvent
-	// Deduplicate: keep only the most recent disconnect per CN.
-	latest := map[string]lib.AuditEvent{}
-	for _, ev := range sessions {
-		if ev.DisconnectTime.IsZero() || ev.DisconnectTime.Before(cutoff) {
+	cutoff := time.Now().Add(-recentWindow).Unix()
+	// Deduplicate by CN+IP, keeping the most recent disconnect per location.
+	latest := map[string]recentDisconnect{}
+	for _, r := range records {
+		if r.Epoch < cutoff {
 			continue
 		}
-		if activeCNs[ev.CN] {
+		if activeCNs[r.CN] {
 			continue
 		}
-		if prev, ok := latest[ev.CN]; !ok || ev.DisconnectTime.After(prev.DisconnectTime) {
-			latest[ev.CN] = ev
+		key := r.CN + "|" + r.IP
+		if prev, ok := latest[key]; !ok || r.Epoch > prev.Epoch {
+			latest[key] = r
 		}
-	}
-	for _, ev := range latest {
-		recentIPs = append(recentIPs, ev.SourceIP)
-		recentSessions = append(recentSessions, ev)
 	}
 
-	if len(recentSessions) == 0 {
+	if len(latest) == 0 {
 		return geoClients
 	}
 
-	geoMap := lib.GeoLookupBatch(dbPath, recentIPs)
-	for _, ev := range recentSessions {
+	// Only resolve IPs that don't already carry coordinates.
+	var ips []string
+	for _, r := range latest {
+		if r.Lat == 0 && r.Lng == 0 {
+			ips = append(ips, r.IP)
+		}
+	}
+	geoMap := lib.GeoLookupBatch(dbPath, ips)
+
+	for _, r := range latest {
 		gc := lib.GeoClient{
 			IsDisconnected: true,
-			DisconnectedAt: ev.DisconnectTime.Format("15:04:05"),
-			Duration:       ev.Duration,
+			DisconnectedAt: time.Unix(r.Epoch, 0).Format("2006-01-02 15:04:05"),
+			Duration:       r.Duration,
 		}
-		gc.CommonName = ev.CN
-		gc.RealAddress = ev.SourceIP
-		if loc, ok := geoMap[ev.SourceIP]; ok {
+		gc.CommonName = r.CN
+		gc.RealAddress = r.IP
+		if r.Lat != 0 || r.Lng != 0 {
+			// Coordinates supplied directly (e.g. seeded entries).
+			gc.Country = r.Country
+			gc.City = r.City
+			gc.Latitude = r.Lat
+			gc.Longitude = r.Lng
+			gc.Located = true
+		} else if loc, ok := geoMap[r.IP]; ok {
 			gc.Country = loc.Country
 			gc.City = loc.City
 			gc.Latitude = loc.Latitude

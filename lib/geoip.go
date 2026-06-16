@@ -60,7 +60,11 @@ func GeoLookupBatch(dbPath string, ips []string) map[string]GeoLocation {
 			Latitude:  rec.Location.Latitude,
 			Longitude: rec.Location.Longitude,
 		}
-		if loc.Country == "" && loc.City == "" {
+		// Keep the record if we have either a name or usable coordinates.
+		// Coordinates alone are enough to place a marker, so don't drop a
+		// resolved location just because the name fields are empty (matches
+		// EnrichWithGeo's Located check on the active-client path).
+		if loc.Country == "" && loc.City == "" && loc.Latitude == 0 && loc.Longitude == 0 {
 			continue
 		}
 		result[rawIP] = loc

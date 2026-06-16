@@ -266,6 +266,32 @@ setup_management_interface() {
   log "OpenVPN restarted."
 }
 
+setup_disconnect_hook() {
+  log "Checking client-disconnect hook..."
+  local conf="${OPENVPN_CONF_DIR}/server.conf"
+  local hook="${SCRIPTS_DST}/client-disconnect.sh"
+  local changed=0
+
+  if ! grep -qE "^script-security[[:space:]]+2" "$conf"; then
+    sed -i '/^script-security /d' "$conf"
+    echo "script-security 2" >> "$conf"
+    changed=1
+  fi
+  if ! grep -qF "client-disconnect ${hook}" "$conf"; then
+    sed -i '\#^client-disconnect #d' "$conf"
+    echo "client-disconnect ${hook}" >> "$conf"
+    changed=1
+  fi
+
+  if (( changed )); then
+    log "Added client-disconnect hook to server.conf."
+    systemctl restart openvpn-server@server
+    log "OpenVPN restarted."
+  else
+    log "client-disconnect hook already configured — skipping."
+  fi
+}
+
 setup_pki_symlink() {
   log "Checking PKI symlink..."
   local link="${OPENVPN_CONF_DIR}/pki"
@@ -645,6 +671,7 @@ run_install() {
 
   setup_directories
   setup_management_interface
+  setup_disconnect_hook
   setup_pki_symlink
   setup_client_template
   install_scripts
